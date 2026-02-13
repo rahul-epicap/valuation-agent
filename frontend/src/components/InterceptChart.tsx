@@ -12,48 +12,45 @@ import {
   Legend,
   Filler,
 } from 'chart.js';
-import { DashboardData, COLORS, HIGHLIGHT_COLORS, MULTIPLE_KEYS, Y_LABELS_TIME } from '../lib/types';
+import { DashboardData, COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
-import { getActiveTickers, filterMultiples, percentile } from '../lib/filters';
+import { getActiveTickers, filterPoints, percentile } from '../lib/filters';
+import { linearRegression } from '../lib/regression';
 import MetricToggle from './MetricToggle';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-interface MultiplesChartProps {
+interface InterceptChartProps {
   data: DashboardData;
   state: DashboardState;
   dispatch: React.Dispatch<any>;
 }
 
-export default function MultiplesChart({ data, state, dispatch }: MultiplesChartProps) {
-  const type = state.mul;
+export default function InterceptChart({ data, state, dispatch }: InterceptChartProps) {
+  const type = state.int;
   const col = COLORS[type];
-  const mk = MULTIPLE_KEYS[type];
 
   const activeTickers = useMemo(
     () => getActiveTickers(data, state.exTk, state.indOn),
     [data, state.exTk, state.indOn]
   );
 
-  const { avgs, q75s } = useMemo(() => {
-    const avgs: (number | null)[] = [];
-    const q75s: (number | null)[] = [];
+  const intercepts = useMemo(() => {
+    const result: (number | null)[] = [];
     for (let di = 0; di < data.dates.length; di++) {
-      const vals = filterMultiples(data, type, di, activeTickers, state.grMin, state.grMax);
-      if (vals.length < 4) {
-        avgs.push(null);
-        q75s.push(null);
+      const pts = filterPoints(data, type, di, activeTickers, state.grMin, state.grMax);
+      if (pts.length < 5) {
+        result.push(null);
         continue;
       }
-      vals.sort((a, b) => a - b);
-      avgs.push(+(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2));
-      q75s.push(+vals[Math.floor(vals.length * 0.75)].toFixed(2));
+      const rg = linearRegression(pts.map((p) => [p.x, p.y] as [number, number]));
+      result.push(rg ? +rg.intercept.toFixed(6) : null);
     }
-    return { avgs, q75s };
+    return result;
   }, [data, type, activeTickers, state.grMin, state.grMax]);
 
   const percentileDatasets = useMemo(() => {
-    const valid = avgs.filter((v): v is number => v != null);
+    const valid = intercepts.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
@@ -70,7 +67,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
         pointRadius: 0,
         pointHoverRadius: 0,
         fill: false,
-        order: 5,
+        order: 4,
       },
       {
         label: 'Median',
@@ -81,7 +78,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
         pointRadius: 0,
         pointHoverRadius: 0,
         fill: false,
-        order: 5,
+        order: 4,
       },
       {
         label: 'P75',
@@ -92,55 +89,10 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
         pointRadius: 0,
         pointHoverRadius: 0,
         fill: false,
-        order: 5,
+        order: 4,
       },
     ];
-  }, [avgs, data.dates.length]);
-
-  const datasets = useMemo(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ds: any[] = [
-      {
-        label: 'Top Quartile',
-        data: q75s,
-        borderColor: col.m,
-        backgroundColor: col.m + '18',
-        fill: true,
-        borderWidth: 2,
-        order: 2,
-      },
-      {
-        label: 'Average',
-        data: avgs,
-        borderColor: '#8892a6',
-        backgroundColor: 'rgba(136,146,166,.08)',
-        fill: true,
-        borderWidth: 2,
-        borderDash: [5, 3],
-        order: 3,
-      },
-      ...percentileDatasets,
-    ];
-
-    const hlA = [...state.hlTk];
-    hlA.forEach((tk, i) => {
-      const fm = data.fm[tk];
-      if (!fm) return;
-      ds.push({
-        label: tk,
-        data: fm[mk],
-        borderColor: HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length],
-        backgroundColor: 'transparent',
-        borderWidth: 2.5,
-        fill: false,
-        order: 1,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-      });
-    });
-
-    return ds;
-  }, [avgs, q75s, percentileDatasets, state.hlTk, data, mk, col]);
+  }, [intercepts, data.dates.length]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -148,7 +100,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
     animation: { duration: 200 },
     plugins: {
       legend: {
-        display: true,
+        display: percentileDatasets.length > 0,
         position: 'top',
         labels: { boxWidth: 10, padding: 8, font: { size: 9.5 }, usePointStyle: true, pointStyle: 'circle' },
       },
@@ -160,44 +112,58 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
         titleFont: { family: "'JetBrains Mono', monospace", size: 11, weight: '600' },
         bodyFont: { size: 10.5 },
         padding: 8,
-        mode: 'index',
-        intersect: false,
         callbacks: {
-          label: (item: { dataset: { label: string }; parsed: { y: number | null } }) =>
-            `${item.dataset.label}: ${item.parsed.y != null ? item.parsed.y.toFixed(1) + 'x' : 'n/a'}`,
+          label: (item: { parsed: { y: number }; dataset: { label: string } }) => {
+            if (['P25', 'Median', 'P75'].includes(item.dataset.label)) {
+              return `${item.dataset.label}: ${item.parsed.y.toFixed(4)}`;
+            }
+            return `Intercept: ${item.parsed.y.toFixed(4)}`;
+          },
         },
       },
     },
     scales: {
       x: {
         title: { display: true, text: 'Date', font: { weight: '600' } },
-        grid: { color: 'rgba(28,40,66,.2)' },
+        grid: { color: 'rgba(28,40,66,.25)' },
         ticks: { maxTicksLimit: 14, font: { size: 9.5 } },
       },
       y: {
-        title: { display: true, text: Y_LABELS_TIME[type], font: { weight: '600' } },
+        title: { display: true, text: 'Regression Intercept', font: { weight: '600' } },
         grid: { color: 'rgba(28,40,66,.25)' },
-        ticks: { callback: (v: number) => v + 'x' },
       },
     },
     elements: {
-      point: { radius: 0, hoverRadius: 4 },
-      line: { tension: 0.3, borderWidth: 2 },
+      point: { radius: 1.5, hoverRadius: 5 },
+      line: { tension: 0.3, borderWidth: 2.5 },
     },
   };
+
+  const datasets = [
+    {
+      label: 'Intercept',
+      data: intercepts,
+      borderColor: col.m,
+      backgroundColor: col.b,
+      fill: { target: 'origin', above: col.m + '12' },
+      pointBackgroundColor: col.m,
+      order: 1,
+    },
+    ...percentileDatasets,
+  ];
 
   return (
     <div>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
           <div className="font-bold" style={{ fontSize: '13.5px', letterSpacing: '-0.2px' }}>
-            Multiples Over Time
+            Regression Intercept Over Time
           </div>
           <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '1px' }}>
-            Average vs Top Quartile — responds to all filters
+            Intercept trend — responds to all filters
           </div>
         </div>
-        <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_MUL', payload: t })} />
+        <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_INT', payload: t })} />
       </div>
       <div className="relative w-full" style={{ height: 320 }}>
         <Line data={{ labels: data.dates, datasets }} options={options} />

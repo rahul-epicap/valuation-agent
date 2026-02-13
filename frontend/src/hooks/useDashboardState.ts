@@ -7,19 +7,22 @@ export interface DashboardState {
   reg: MetricType;
   mul: MetricType;
   slp: MetricType;
+  int: MetricType;
   di: number;
   indOn: Set<string>;
   exTk: Set<string>;
   hlTk: Set<string>;
   hlSrch: string;
   exSrch: string;
-  epsCap: boolean;
+  grMin: number | null;
+  grMax: number | null;
 }
 
 type Action =
   | { type: 'SET_REG'; payload: MetricType }
   | { type: 'SET_MUL'; payload: MetricType }
   | { type: 'SET_SLP'; payload: MetricType }
+  | { type: 'SET_INT'; payload: MetricType }
   | { type: 'SET_DATE'; payload: number }
   | { type: 'TOGGLE_INDUSTRY'; payload: string }
   | { type: 'SELECT_ALL_INDUSTRIES'; payload: string[] }
@@ -31,7 +34,8 @@ type Action =
   | { type: 'EXCLUDE_VISIBLE'; payload: string[] }
   | { type: 'SET_HL_SEARCH'; payload: string }
   | { type: 'SET_EX_SEARCH'; payload: string }
-  | { type: 'SET_EPS_CAP'; payload: boolean };
+  | { type: 'SET_GROWTH_MIN'; payload: number | null }
+  | { type: 'SET_GROWTH_MAX'; payload: number | null };
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -41,6 +45,8 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, mul: action.payload };
     case 'SET_SLP':
       return { ...state, slp: action.payload };
+    case 'SET_INT':
+      return { ...state, int: action.payload };
     case 'SET_DATE':
       return { ...state, di: action.payload };
     case 'TOGGLE_INDUSTRY': {
@@ -87,8 +93,10 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, hlSrch: action.payload };
     case 'SET_EX_SEARCH':
       return { ...state, exSrch: action.payload };
-    case 'SET_EPS_CAP':
-      return { ...state, epsCap: action.payload };
+    case 'SET_GROWTH_MIN':
+      return { ...state, grMin: action.payload };
+    case 'SET_GROWTH_MAX':
+      return { ...state, grMax: action.payload };
     default:
       return state;
   }
@@ -100,13 +108,15 @@ export function createInitialState(data: DashboardData): DashboardState {
     reg: 'evRev',
     mul: 'evRev',
     slp: 'evRev',
+    int: 'evRev',
     di: data.dates.length - 1,
     indOn: new Set(allIndustries),
     exTk: new Set(),
     hlTk: new Set(),
     hlSrch: '',
     exSrch: '',
-    epsCap: true,
+    grMin: null,
+    grMax: null,
   };
 }
 

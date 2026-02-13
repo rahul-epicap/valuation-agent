@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { DashboardData, COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
-import { getActiveTickers, filterPoints } from '../lib/filters';
+import { getActiveTickers, filterPoints, percentile } from '../lib/filters';
 import { linearRegression } from '../lib/regression';
 import MetricToggle from './MetricToggle';
 
@@ -38,7 +38,7 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
   const slopes = useMemo(() => {
     const result: (number | null)[] = [];
     for (let di = 0; di < data.dates.length; di++) {
-      const pts = filterPoints(data, type, di, activeTickers, state.epsCap);
+      const pts = filterPoints(data, type, di, activeTickers, state.grMin, state.grMax);
       if (pts.length < 5) {
         result.push(null);
         continue;
@@ -47,14 +47,63 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
       result.push(rg ? +rg.slope.toFixed(6) : null);
     }
     return result;
-  }, [data, type, activeTickers, state.epsCap]);
+  }, [data, type, activeTickers, state.grMin, state.grMax]);
 
-  const options: any = {
+  const percentileDatasets = useMemo(() => {
+    const valid = slopes.filter((v): v is number => v != null);
+    if (valid.length < 4) return [];
+    const sorted = [...valid].sort((a, b) => a - b);
+    const p25 = percentile(sorted, 0.25);
+    const p50 = percentile(sorted, 0.5);
+    const p75 = percentile(sorted, 0.75);
+    const len = data.dates.length;
+    return [
+      {
+        label: 'P25',
+        data: Array(len).fill(p25),
+        borderColor: 'rgba(136,146,166,.4)',
+        borderDash: [4, 4],
+        borderWidth: 1,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        order: 4,
+      },
+      {
+        label: 'Median',
+        data: Array(len).fill(p50),
+        borderColor: 'rgba(136,146,166,.6)',
+        borderDash: [4, 4],
+        borderWidth: 1.5,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        order: 4,
+      },
+      {
+        label: 'P75',
+        data: Array(len).fill(p75),
+        borderColor: 'rgba(136,146,166,.4)',
+        borderDash: [4, 4],
+        borderWidth: 1,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        order: 4,
+      },
+    ];
+  }, [slopes, data.dates.length]);
+
+  const options: Record<string, unknown> = {
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 200 },
     plugins: {
-      legend: { display: false },
+      legend: {
+        display: percentileDatasets.length > 0,
+        position: 'top',
+        labels: { boxWidth: 10, padding: 8, font: { size: 9.5 }, usePointStyle: true, pointStyle: 'circle' },
+      },
       tooltip: {
         backgroundColor: '#1a2440',
         borderColor: '#253252',
@@ -64,7 +113,12 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
         bodyFont: { size: 10.5 },
         padding: 8,
         callbacks: {
-          label: (item: any) => `Slope: ${item.parsed.y.toFixed(4)}`,
+          label: (item: { parsed: { y: number }; dataset: { label: string } }) => {
+            if (['P25', 'Median', 'P75'].includes(item.dataset.label)) {
+              return `${item.dataset.label}: ${item.parsed.y.toFixed(4)}`;
+            }
+            return `Slope: ${item.parsed.y.toFixed(4)}`;
+          },
         },
       },
     },
@@ -87,12 +141,15 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
 
   const datasets = [
     {
+      label: 'Slope',
       data: slopes,
       borderColor: col.m,
       backgroundColor: col.b,
       fill: { target: 'origin', above: col.m + '12' },
       pointBackgroundColor: col.m,
+      order: 1,
     },
+    ...percentileDatasets,
   ];
 
   return (

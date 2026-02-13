@@ -9,6 +9,7 @@ import Sidebar from '../components/Sidebar';
 import RegressionChart from '../components/RegressionChart';
 import MultiplesChart from '../components/MultiplesChart';
 import SlopeChart from '../components/SlopeChart';
+import InterceptChart from '../components/InterceptChart';
 import UploadModal from '../components/UploadModal';
 
 export default function DashboardPage() {
@@ -147,6 +148,9 @@ function DashboardContent({
             </div>
             <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
               <SlopeChart data={data} state={state} dispatch={dispatch} />
+            </div>
+            <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+              <InterceptChart data={data} state={state} dispatch={dispatch} />
             </div>
           </div>
         </main>
