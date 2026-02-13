@@ -47,9 +47,6 @@ _TICKERS_PATH = Path(__file__).resolve().parent.parent.parent / "tickers.json"
 # BDH batch size — keeps each query under Bloomberg's row limits
 _BATCH_SIZE = 40
 
-# All metric keys that each ticker must have in the output (matches excel_parser)
-_ALL_METRIC_KEYS = ("er", "eg", "pe", "rg", "xg", "fe")
-
 
 def _clean_ticker(bbg_ticker: str) -> str:
     """Strip ' US Equity' suffix to get the short ticker symbol."""
@@ -129,9 +126,13 @@ class BloombergService:
 
     @staticmethod
     def _shift_date_back(date_str: str, years: int) -> str:
-        """Shift a YYYY-MM-DD date back by N years."""
+        """Shift a YYYY-MM-DD date back by N years (handles leap days)."""
         dt = datetime.strptime(date_str, "%Y-%m-%d")
-        shifted = dt.replace(year=dt.year - years)
+        try:
+            shifted = dt.replace(year=dt.year - years)
+        except ValueError:
+            # Feb 29 in a leap year → Feb 28 in non-leap year
+            shifted = dt.replace(year=dt.year - years, day=dt.day - 1)
         return shifted.strftime("%Y-%m-%d")
 
     def _bdh_sync(
@@ -268,9 +269,7 @@ class BloombergService:
                     result.setdefault(ticker, {})[date_str] = val
         else:
             # Fallback: try to parse whatever structure we got
-            logger.warning(
-                "BDH result has unexpected format. Columns: %s", cols
-            )
+            logger.warning("BDH result has unexpected format. Columns: %s", cols)
 
         return result
 
@@ -288,7 +287,13 @@ class BloombergService:
         for batch in self._batches(self._tickers, _BATCH_SIZE):
             try:
                 df = await asyncio.to_thread(
-                    self._bdh_sync, batch, field, start_date, end_date, overrides, fill_prev
+                    self._bdh_sync,
+                    batch,
+                    field,
+                    start_date,
+                    end_date,
+                    overrides,
+                    fill_prev,
                 )
             except Exception:
                 logger.exception(
@@ -394,9 +399,7 @@ class BloombergService:
 
         for batch in self._batches(self._tickers, _BATCH_SIZE):
             try:
-                df = await asyncio.to_thread(
-                    self._bdp_sync, batch, ["INDUSTRY_SECTOR"]
-                )
+                df = await asyncio.to_thread(self._bdp_sync, batch, ["INDUSTRY_SECTOR"])
             except Exception:
                 logger.exception(
                     "BDP INDUSTRY_SECTOR failed for batch starting with %s",
@@ -426,7 +429,10 @@ class BloombergService:
                         break
 
             if sec_col is None:
-                logger.warning("BDP result: cannot find security column. Columns: %s", list(df.columns))
+                logger.warning(
+                    "BDP result: cannot find security column. Columns: %s",
+                    list(df.columns),
+                )
                 continue
 
             for _, row in df.iterrows():
@@ -484,19 +490,27 @@ class BloombergService:
         ) = await asyncio.gather(
             self._fetch_bdh_metric("CURR_ENTP_VAL", start_date, end_date),
             self._fetch_bdh_metric(
-                "BEST_SALES", start_date, end_date,
+                "BEST_SALES",
+                start_date,
+                end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
             ),
             self._fetch_bdh_metric(
-                "BEST_SALES", start_date, end_date,
+                "BEST_SALES",
+                start_date,
+                end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
             ),
             self._fetch_bdh_metric(
-                "BEST_GROSS_MARGIN", start_date, end_date,
+                "BEST_GROSS_MARGIN",
+                start_date,
+                end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
             ),
             self._fetch_bdh_metric(
-                "BEST_EPS", start_date, end_date,
+                "BEST_EPS",
+                start_date,
+                end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
             ),
             # Fetch yearly data starting 2 years earlier to ensure we capture the
@@ -560,15 +574,16 @@ class BloombergService:
         rg_arrays: dict[str, list[float | None]] = {}
         xg_arrays: dict[str, list[float | None]] = {}
 
-        null_arr = [None] * num_dates
+        def _null_arr() -> list[None]:
+            return [None] * num_dates
 
         for ticker in short_tickers:
-            ev_vals = ev_arrays.get(ticker, null_arr)
-            fwd_rev_vals = fwd_rev_arrays.get(ticker, null_arr)
-            nxt_rev_vals = nxt_rev_arrays.get(ticker, null_arr)
-            gm_vals = gm_arrays.get(ticker, null_arr)
-            fwd_eps_vals = fwd_eps_arrays.get(ticker, null_arr)
-            trail_eps_vals = trail_eps_arrays.get(ticker, null_arr)
+            ev_vals = ev_arrays.get(ticker) or _null_arr()
+            fwd_rev_vals = fwd_rev_arrays.get(ticker) or _null_arr()
+            nxt_rev_vals = nxt_rev_arrays.get(ticker) or _null_arr()
+            gm_vals = gm_arrays.get(ticker) or _null_arr()
+            fwd_eps_vals = fwd_eps_arrays.get(ticker) or _null_arr()
+            trail_eps_vals = trail_eps_arrays.get(ticker) or _null_arr()
 
             er_vals: list[float | None] = []
             eg_vals: list[float | None] = []
@@ -624,12 +639,12 @@ class BloombergService:
         fm: dict[str, dict[str, list[float | None]]] = {}
         for ticker in short_tickers:
             fm[ticker] = {
-                "er": er_arrays.get(ticker, null_arr),
-                "eg": eg_arrays.get(ticker, null_arr),
-                "pe": pe_arrays.get(ticker, null_arr),
-                "rg": rg_arrays.get(ticker, null_arr),
-                "xg": xg_arrays.get(ticker, null_arr),
-                "fe": fwd_eps_arrays.get(ticker, null_arr),
+                "er": er_arrays.get(ticker) or _null_arr(),
+                "eg": eg_arrays.get(ticker) or _null_arr(),
+                "pe": pe_arrays.get(ticker) or _null_arr(),
+                "rg": rg_arrays.get(ticker) or _null_arr(),
+                "xg": xg_arrays.get(ticker) or _null_arr(),
+                "fe": fwd_eps_arrays.get(ticker) or _null_arr(),
             }
 
         result = {

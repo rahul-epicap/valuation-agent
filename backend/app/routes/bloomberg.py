@@ -1,12 +1,15 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
 from app.services.bloomberg_service import BloombergService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["bloomberg"])
 
@@ -34,6 +37,16 @@ class BloombergFetchRequest(BaseModel):
     start_date: str = "2015-01-01"
     end_date: str | None = None
 
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                datetime.strptime(v, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError(f"Invalid date format '{v}', expected YYYY-MM-DD")
+        return v
+
 
 @router.post("/bloomberg/fetch")
 async def fetch_bloomberg_data(
@@ -53,10 +66,11 @@ async def fetch_bloomberg_data(
             end_date=body.end_date,
         )
     except Exception as e:
+        logger.exception("Bloomberg fetch failed")
         raise HTTPException(
             status_code=502,
             detail=f"Bloomberg fetch failed: {e}",
-        )
+        ) from e
 
     # Generate name if not provided
     name = body.name
