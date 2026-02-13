@@ -33,7 +33,7 @@ import asyncio
 import json
 import logging
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -677,3 +677,138 @@ class BloombergService:
         )
 
         return result
+
+    # ------------------------------------------------------------------
+    # Incremental update helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _merge_dashboard_data(
+        existing: dict,
+        new: dict,
+    ) -> dict:
+        """Merge new (small) dashboard data into existing (full) dashboard data.
+
+        - Union all dates, sorted chronologically.
+        - For overlapping dates: prefer new values (captures Bloomberg revisions),
+          fall back to existing if new value is None.
+        - Tickers only in existing: keep old values, pad new date positions with None.
+        - Tickers only in new: pad historical positions with None.
+        - Industries: merge dicts, new overwrites existing for same ticker.
+        """
+        old_dates: list[str] = existing.get("dates", [])
+        new_dates: list[str] = new.get("dates", [])
+
+        # Build unified sorted date list
+        merged_dates = sorted(set(old_dates) | set(new_dates))
+
+        # Index lookups: date → position in old/new arrays
+        old_idx = {d: i for i, d in enumerate(old_dates)}
+        new_idx = {d: i for i, d in enumerate(new_dates)}
+
+        all_tickers = sorted(
+            set(existing.get("tickers", [])) | set(new.get("tickers", []))
+        )
+
+        old_fm: dict = existing.get("fm", {})
+        new_fm: dict = new.get("fm", {})
+        metric_keys = ["er", "eg", "pe", "rg", "xg", "fe"]
+
+        merged_fm: dict[str, dict[str, list[float | None]]] = {}
+        for ticker in all_tickers:
+            old_metrics = old_fm.get(ticker, {})
+            new_metrics = new_fm.get(ticker, {})
+
+            ticker_data: dict[str, list[float | None]] = {}
+            for key in metric_keys:
+                old_arr: list = old_metrics.get(key, [])
+                new_arr: list = new_metrics.get(key, [])
+
+                merged_arr: list[float | None] = []
+                for d in merged_dates:
+                    new_val: float | None = None
+                    old_val: float | None = None
+
+                    ni = new_idx.get(d)
+                    if ni is not None and ni < len(new_arr):
+                        new_val = new_arr[ni]
+
+                    oi = old_idx.get(d)
+                    if oi is not None and oi < len(old_arr):
+                        old_val = old_arr[oi]
+
+                    # Prefer new value; fall back to old if new is None
+                    merged_arr.append(new_val if new_val is not None else old_val)
+
+                ticker_data[key] = merged_arr
+            merged_fm[ticker] = ticker_data
+
+        # Merge industries (new overwrites old)
+        merged_industries = {**existing.get("industries", {})}
+        merged_industries.update(new.get("industries", {}))
+
+        return {
+            "dates": merged_dates,
+            "tickers": all_tickers,
+            "industries": merged_industries,
+            "fm": merged_fm,
+        }
+
+    async def fetch_incremental(
+        self,
+        existing_data: dict,
+        lookback_days: int = 5,
+        periodicity: str = "DAILY",
+    ) -> dict:
+        """Fetch only recent data from Bloomberg and merge into existing snapshot.
+
+        Computes a narrow date window (last_date - lookback_days → today) and
+        uses the existing fetch_all() with that range. Then merges the small
+        result into the full existing data. Falls back to full fetch if no
+        existing data is provided.
+
+        Args:
+            existing_data: The current full dashboard JSON from the latest snapshot.
+            lookback_days: Number of days before the last existing date to re-fetch
+                           (covers revisions + weekends/holidays). Default 5.
+            periodicity: BDH periodicity — "DAILY", "MONTHLY", or "WEEKLY".
+
+        Returns:
+            Merged dashboard JSON with the same schema as fetch_all().
+        """
+        existing_dates = existing_data.get("dates", [])
+
+        if not existing_dates:
+            logger.info("No existing dates — falling back to full fetch")
+            return await self.fetch_all(periodicity=periodicity)
+
+        last_date_str = existing_dates[-1]
+        last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
+        start = last_date - timedelta(days=lookback_days)
+        start_str = start.strftime("%Y-%m-%d")
+        end_str = date.today().strftime("%Y-%m-%d")
+
+        logger.info(
+            "Incremental fetch: %s to %s (lookback=%d days from last date %s)",
+            start_str,
+            end_str,
+            lookback_days,
+            last_date_str,
+        )
+
+        new_data = await self.fetch_all(
+            start_date=start_str,
+            end_date=end_str,
+            periodicity=periodicity,
+        )
+
+        merged = self._merge_dashboard_data(existing_data, new_data)
+
+        logger.info(
+            "Incremental merge: %d existing dates + %d new dates → %d merged dates",
+            len(existing_dates),
+            len(new_data.get("dates", [])),
+            len(merged.get("dates", [])),
+        )
+
+        return merged
