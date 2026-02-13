@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -6,15 +7,36 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.db import Base, engine
-from app.routes import dashboard, template, upload
+from app.routes import bloomberg, dashboard, template, upload
+from app.services.bloomberg_service import BloombergService
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create database tables on startup."""
+    """Create database tables on startup; optionally start Bloomberg session."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Try to start Bloomberg service (non-fatal if Bloomberg Terminal is not running)
+    bbg_service: BloombergService | None = None
+    try:
+        bbg_service = BloombergService()
+        bbg_service.start()
+        bloomberg.set_service(bbg_service)
+        logger.info("Bloomberg service initialized successfully")
+    except Exception:
+        logger.warning(
+            "Bloomberg service unavailable — Bloomberg Terminal may not be running. "
+            "The /api/bloomberg/fetch endpoint will return 503."
+        )
+        bbg_service = None
+
     yield
+
+    if bbg_service is not None:
+        bbg_service.stop()
     await engine.dispose()
 
 
@@ -37,6 +59,7 @@ app.add_middleware(
 app.include_router(upload.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(template.router, prefix="/api")
+app.include_router(bloomberg.router, prefix="/api")
 
 
 @app.get("/api/health")
@@ -49,7 +72,9 @@ async def health_check():
 # In Docker: /app/frontend/out, in dev: ../../frontend/out
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "out")
 if not os.path.isdir(frontend_dir):
-    frontend_dir = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "out")
+    frontend_dir = os.path.join(
+        os.path.dirname(__file__), "..", "..", "frontend", "out"
+    )
 frontend_dir = os.path.normpath(frontend_dir)
 if os.path.isdir(frontend_dir):
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
