@@ -10,6 +10,7 @@ import RegressionChart from '../components/RegressionChart';
 import MultiplesChart from '../components/MultiplesChart';
 import SlopeChart from '../components/SlopeChart';
 import InterceptChart from '../components/InterceptChart';
+import ChartContainer from '../components/ChartContainer';
 import UploadModal from '../components/UploadModal';
 
 export default function DashboardPage() {
@@ -144,13 +145,28 @@ function DashboardContent({
           </div>
           <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <MultiplesChart data={data} state={state} dispatch={dispatch} />
+              <ChartContainer dates={data.dates}>
+                {({ startDi, endDi, chartHeight }) => (
+                  <MultiplesChart data={data} state={state} dispatch={dispatch}
+                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                )}
+              </ChartContainer>
             </div>
             <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <SlopeChart data={data} state={state} dispatch={dispatch} />
+              <ChartContainer dates={data.dates}>
+                {({ startDi, endDi, chartHeight }) => (
+                  <SlopeChart data={data} state={state} dispatch={dispatch}
+                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                )}
+              </ChartContainer>
             </div>
             <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <InterceptChart data={data} state={state} dispatch={dispatch} />
+              <ChartContainer dates={data.dates}>
+                {({ startDi, endDi, chartHeight }) => (
+                  <InterceptChart data={data} state={state} dispatch={dispatch}
+                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                )}
+              </ChartContainer>
             </div>
           </div>
         </main>

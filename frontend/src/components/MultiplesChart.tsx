@@ -23,9 +23,12 @@ interface MultiplesChartProps {
   data: DashboardData;
   state: DashboardState;
   dispatch: React.Dispatch<any>;
+  startDi: number;
+  endDi: number;
+  chartHeight: number;
 }
 
-export default function MultiplesChart({ data, state, dispatch }: MultiplesChartProps) {
+export default function MultiplesChart({ data, state, dispatch, startDi, endDi, chartHeight }: MultiplesChartProps) {
   const type = state.mul;
   const col = COLORS[type];
   const mk = MULTIPLE_KEYS[type];
@@ -52,14 +55,17 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
     return { avgs, q75s };
   }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
 
+  const slicedAvgs = useMemo(() => avgs.slice(startDi, endDi + 1), [avgs, startDi, endDi]);
+  const slicedQ75s = useMemo(() => q75s.slice(startDi, endDi + 1), [q75s, startDi, endDi]);
+
   const percentileDatasets = useMemo(() => {
-    const valid = avgs.filter((v): v is number => v != null);
+    const valid = slicedAvgs.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
     const p50 = percentile(sorted, 0.5);
     const p75 = percentile(sorted, 0.75);
-    const len = data.dates.length;
+    const len = endDi - startDi + 1;
     return [
       {
         label: 'P25',
@@ -95,14 +101,14 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
         order: 5,
       },
     ];
-  }, [avgs, data.dates.length]);
+  }, [slicedAvgs, startDi, endDi]);
 
   const datasets = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ds: any[] = [
       {
         label: 'Top Quartile',
-        data: q75s,
+        data: slicedQ75s,
         borderColor: col.m,
         backgroundColor: col.m + '18',
         fill: true,
@@ -111,7 +117,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
       },
       {
         label: 'Average',
-        data: avgs,
+        data: slicedAvgs,
         borderColor: '#8892a6',
         backgroundColor: 'rgba(136,146,166,.08)',
         fill: true,
@@ -128,7 +134,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
       if (!fm) return;
       ds.push({
         label: tk,
-        data: fm[mk],
+        data: fm[mk].slice(startDi, endDi + 1),
         borderColor: HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length],
         backgroundColor: 'transparent',
         borderWidth: 2.5,
@@ -140,7 +146,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
     });
 
     return ds;
-  }, [avgs, q75s, percentileDatasets, state.hlTk, data, mk, col]);
+  }, [slicedAvgs, slicedQ75s, percentileDatasets, state.hlTk, data, mk, col, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -199,8 +205,8 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_MUL', payload: t })} />
       </div>
-      <div className="relative w-full" style={{ height: 320 }}>
-        <Line data={{ labels: data.dates, datasets }} options={options} />
+      <div className="relative w-full" style={chartHeight > 0 ? { height: chartHeight } : { height: '100%' }}>
+        <Line data={{ labels: data.dates.slice(startDi, endDi + 1), datasets }} options={options} />
       </div>
     </div>
   );

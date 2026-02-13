@@ -24,9 +24,12 @@ interface InterceptChartProps {
   data: DashboardData;
   state: DashboardState;
   dispatch: React.Dispatch<any>;
+  startDi: number;
+  endDi: number;
+  chartHeight: number;
 }
 
-export default function InterceptChart({ data, state, dispatch }: InterceptChartProps) {
+export default function InterceptChart({ data, state, dispatch, startDi, endDi, chartHeight }: InterceptChartProps) {
   const type = state.int;
   const col = COLORS[type];
 
@@ -49,14 +52,16 @@ export default function InterceptChart({ data, state, dispatch }: InterceptChart
     return result;
   }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
 
+  const slicedIntercepts = useMemo(() => intercepts.slice(startDi, endDi + 1), [intercepts, startDi, endDi]);
+
   const percentileDatasets = useMemo(() => {
-    const valid = intercepts.filter((v): v is number => v != null);
+    const valid = slicedIntercepts.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
     const p50 = percentile(sorted, 0.5);
     const p75 = percentile(sorted, 0.75);
-    const len = data.dates.length;
+    const len = endDi - startDi + 1;
     return [
       {
         label: 'P25',
@@ -92,7 +97,7 @@ export default function InterceptChart({ data, state, dispatch }: InterceptChart
         order: 4,
       },
     ];
-  }, [intercepts, data.dates.length]);
+  }, [slicedIntercepts, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -142,7 +147,7 @@ export default function InterceptChart({ data, state, dispatch }: InterceptChart
   const datasets = [
     {
       label: 'Intercept',
-      data: intercepts,
+      data: slicedIntercepts,
       borderColor: col.m,
       backgroundColor: col.b,
       fill: { target: 'origin', above: col.m + '12' },
@@ -165,8 +170,8 @@ export default function InterceptChart({ data, state, dispatch }: InterceptChart
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_INT', payload: t })} />
       </div>
-      <div className="relative w-full" style={{ height: 320 }}>
-        <Line data={{ labels: data.dates, datasets }} options={options} />
+      <div className="relative w-full" style={chartHeight > 0 ? { height: chartHeight } : { height: '100%' }}>
+        <Line data={{ labels: data.dates.slice(startDi, endDi + 1), datasets }} options={options} />
       </div>
     </div>
   );

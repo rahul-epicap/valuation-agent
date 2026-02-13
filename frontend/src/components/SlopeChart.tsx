@@ -24,9 +24,12 @@ interface SlopeChartProps {
   data: DashboardData;
   state: DashboardState;
   dispatch: React.Dispatch<any>;
+  startDi: number;
+  endDi: number;
+  chartHeight: number;
 }
 
-export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
+export default function SlopeChart({ data, state, dispatch, startDi, endDi, chartHeight }: SlopeChartProps) {
   const type = state.slp;
   const col = COLORS[type];
 
@@ -49,14 +52,16 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
     return result;
   }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
 
+  const slicedSlopes = useMemo(() => slopes.slice(startDi, endDi + 1), [slopes, startDi, endDi]);
+
   const percentileDatasets = useMemo(() => {
-    const valid = slopes.filter((v): v is number => v != null);
+    const valid = slicedSlopes.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
     const p50 = percentile(sorted, 0.5);
     const p75 = percentile(sorted, 0.75);
-    const len = data.dates.length;
+    const len = endDi - startDi + 1;
     return [
       {
         label: 'P25',
@@ -92,7 +97,7 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
         order: 4,
       },
     ];
-  }, [slopes, data.dates.length]);
+  }, [slicedSlopes, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -142,7 +147,7 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
   const datasets = [
     {
       label: 'Slope',
-      data: slopes,
+      data: slicedSlopes,
       borderColor: col.m,
       backgroundColor: col.b,
       fill: { target: 'origin', above: col.m + '12' },
@@ -165,8 +170,8 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_SLP', payload: t })} />
       </div>
-      <div className="relative w-full" style={{ height: 320 }}>
-        <Line data={{ labels: data.dates, datasets }} options={options} />
+      <div className="relative w-full" style={chartHeight > 0 ? { height: chartHeight } : { height: '100%' }}>
+        <Line data={{ labels: data.dates.slice(startDi, endDi + 1), datasets }} options={options} />
       </div>
     </div>
   );
