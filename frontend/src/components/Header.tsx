@@ -12,6 +12,8 @@ interface HeaderProps {
   activeSnapshotId?: number;
   onSnapshotChange: (id: number) => void;
   onUploadClick: () => void;
+  onUpdateClick: () => void;
+  updating: boolean;
 }
 
 export default function Header({
@@ -22,6 +24,8 @@ export default function Header({
   activeSnapshotId,
   onSnapshotChange,
   onUploadClick,
+  onUpdateClick,
+  updating,
 }: HeaderProps) {
   return (
     <header
@@ -68,6 +72,16 @@ export default function Header({
             ))}
           </select>
         )}
+
+        {/* Update Button */}
+        <button
+          onClick={onUpdateClick}
+          disabled={updating}
+          className="text-xs font-semibold px-3 py-1.5 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ background: 'var(--green)', color: '#fff' }}
+        >
+          {updating ? 'Updating…' : 'Update Data'}
+        </button>
 
         {/* Upload Button */}
         <button
