@@ -143,11 +143,12 @@ class BloombergService:
         end_date: str,
         overrides: list[tuple[str, str]] | None = None,
         fill_prev: bool = False,
+        periodicity: str = "MONTHLY",
     ) -> pd.DataFrame:
         """Run a BDH query synchronously (meant to be called in a thread)."""
         if self._bquery is None:
             raise RuntimeError("Bloomberg session not started")
-        options: dict[str, str] = {"periodicitySelection": "MONTHLY"}
+        options: dict[str, str] = {"periodicitySelection": periodicity}
         if fill_prev:
             options["periodicityAdjustment"] = "CALENDAR"
         return self._bquery.bdh(
@@ -280,6 +281,7 @@ class BloombergService:
         end_date: str,
         overrides: list[tuple[str, str]] | None = None,
         fill_prev: bool = False,
+        periodicity: str = "MONTHLY",
     ) -> dict[str, dict[str, float | None]]:
         """Fetch one BDH field for all tickers, batched."""
         result: dict[str, dict[str, float | None]] = {}
@@ -294,6 +296,7 @@ class BloombergService:
                     end_date,
                     overrides,
                     fill_prev,
+                    periodicity,
                 )
             except Exception:
                 logger.exception(
@@ -452,9 +455,13 @@ class BloombergService:
         self,
         start_date: str = "2015-01-01",
         end_date: str | None = None,
+        periodicity: str = "DAILY",
     ) -> dict:
         """
         Fetch all metrics from Bloomberg and assemble the dashboard JSON.
+
+        Args:
+            periodicity: BDH periodicity — "DAILY", "MONTHLY", or "WEEKLY".
 
         Returns a dict with the same schema as excel_parser.parse_excel():
         {
@@ -488,30 +495,36 @@ class BloombergService:
             pe_data,
             industries,
         ) = await asyncio.gather(
-            self._fetch_bdh_metric("CURR_ENTP_VAL", start_date, end_date),
+            self._fetch_bdh_metric(
+                "CURR_ENTP_VAL", start_date, end_date, periodicity=periodicity
+            ),
             self._fetch_bdh_metric(
                 "BEST_SALES",
                 start_date,
                 end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity=periodicity,
             ),
             self._fetch_bdh_metric(
                 "BEST_SALES",
                 start_date,
                 end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
+                periodicity=periodicity,
             ),
             self._fetch_bdh_metric(
                 "BEST_GROSS_MARGIN",
                 start_date,
                 end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity=periodicity,
             ),
             self._fetch_bdh_metric(
                 "BEST_EPS",
                 start_date,
                 end_date,
                 overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity=periodicity,
             ),
             # Fetch yearly data starting 2 years earlier to ensure we capture the
             # most recent annual value for forward-filling (fiscal year-ends vary)
@@ -520,13 +533,15 @@ class BloombergService:
                 self._shift_date_back(start_date, years=2),
                 end_date,
             ),
-            self._fetch_bdh_metric("BEST_PE_RATIO", start_date, end_date),
+            self._fetch_bdh_metric(
+                "BEST_PE_RATIO", start_date, end_date, periodicity=periodicity
+            ),
             self._fetch_industries(),
         )
 
-        # Build unified date list from monthly BDH data
+        # Build unified date list from BDH data
         # (exclude yearly trail_eps_yearly_data — those dates are fiscal year-ends
-        #  and would add odd non-monthly dates to the grid)
+        #  and would add odd dates to the grid)
         all_dates_set: set[str] = set()
         for data in [
             ev_data,
