@@ -54,7 +54,17 @@ SHEET_METRIC_MAP: dict[str, str] = {
 ALL_METRIC_KEYS = ("er", "eg", "pe", "rg", "xg", "fe")
 
 # Strings that should be treated as null/missing values.
-_NULL_STRINGS = {"#N/A", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!", "N/A", ""}
+_NULL_STRINGS = {
+    "#N/A",
+    "#VALUE!",
+    "#REF!",
+    "#DIV/0!",
+    "#NULL!",
+    "#NAME?",
+    "#NUM!",
+    "N/A",
+    "",
+}
 
 
 def _is_datetime(val: Any) -> bool:
@@ -269,11 +279,15 @@ def parse_excel(file_content: bytes) -> dict:
     # --- Parse each data sheet ---
     # Accumulate: dates (union), tickers (union), per-ticker per-metric data
     all_dates_set: set[str] = set()
-    sheet_results: dict[str, tuple[list[str], list[str], dict[str, list[float | None]]]] = {}
+    sheet_results: dict[
+        str, tuple[list[str], list[str], dict[str, list[float | None]]]
+    ] = {}
 
     for sheet_name, metric_key in SHEET_METRIC_MAP.items():
         if sheet_name not in sheet_names:
-            logger.info("Sheet '%s' not found, skipping metric '%s'", sheet_name, metric_key)
+            logger.info(
+                "Sheet '%s' not found, skipping metric '%s'", sheet_name, metric_key
+            )
             sheet_results[metric_key] = ([], [], {})
             continue
 
@@ -283,7 +297,10 @@ def parse_excel(file_content: bytes) -> dict:
         all_dates_set.update(dates)
         logger.info(
             "Sheet '%s' -> metric '%s': %d dates, %d tickers",
-            sheet_name, metric_key, len(dates), len(tickers),
+            sheet_name,
+            metric_key,
+            len(dates),
+            len(tickers),
         )
 
     # --- Parse Industries sheet ---
