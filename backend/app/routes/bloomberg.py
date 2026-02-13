@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
@@ -36,7 +37,7 @@ class BloombergFetchRequest(BaseModel):
     name: str | None = None
     start_date: str = "2015-01-01"
     end_date: str | None = None
-    periodicity: str = "DAILY"
+    periodicity: Literal["DAILY", "WEEKLY", "MONTHLY"] = "DAILY"
 
     @field_validator("start_date", "end_date")
     @classmethod
