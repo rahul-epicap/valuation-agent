@@ -31,8 +31,10 @@ export function filterPoints(
   type: MetricType,
   dateIndex: number,
   tickers: string[],
-  grMin: number | null,
-  grMax: number | null
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null
 ): ScatterPoint[] {
   const mk = MULTIPLE_KEYS[type];
   const gk = GROWTH_KEYS[type];
@@ -50,9 +52,21 @@ export function filterPoints(
     }
     if (type === 'evRev' && m > 80) continue;
     if (type === 'evGP' && m > 120) continue;
+    // Revenue growth filter (always applied)
+    const rg = d.rg[dateIndex];
+    if (rg != null) {
+      const rgPct = (rg as number) * 100;
+      if (revGrMin != null && rgPct < revGrMin) continue;
+      if (revGrMax != null && rgPct > revGrMax) continue;
+    }
+    // EPS growth filter (always applied)
+    const xg = d.xg[dateIndex];
+    if (xg != null) {
+      const xgPct = (xg as number) * 100;
+      if (epsGrMin != null && xgPct < epsGrMin) continue;
+      if (epsGrMax != null && xgPct > epsGrMax) continue;
+    }
     const gPct = (g as number) * 100;
-    if (grMin != null && gPct < grMin) continue;
-    if (grMax != null && gPct > grMax) continue;
     pts.push({ x: gPct, y: m as number, t });
   }
   return pts;
@@ -63,11 +77,12 @@ export function filterMultiples(
   type: MetricType,
   dateIndex: number,
   tickers: string[],
-  grMin: number | null,
-  grMax: number | null
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null
 ): number[] {
   const mk = MULTIPLE_KEYS[type];
-  const gk = GROWTH_KEYS[type];
   const vals: number[] = [];
 
   for (const t of tickers) {
@@ -81,11 +96,19 @@ export function filterMultiples(
     }
     if (type === 'evRev' && (m > 80 || m < 0)) continue;
     if (type === 'evGP' && (m > 120 || m < 0)) continue;
-    const g = d[gk][dateIndex];
-    if (g != null) {
-      const gPct = (g as number) * 100;
-      if (grMin != null && gPct < grMin) continue;
-      if (grMax != null && gPct > grMax) continue;
+    // Revenue growth filter (always applied)
+    const rg = d.rg[dateIndex];
+    if (rg != null) {
+      const rgPct = (rg as number) * 100;
+      if (revGrMin != null && rgPct < revGrMin) continue;
+      if (revGrMax != null && rgPct > revGrMax) continue;
+    }
+    // EPS growth filter (always applied)
+    const xg = d.xg[dateIndex];
+    if (xg != null) {
+      const xgPct = (xg as number) * 100;
+      if (epsGrMin != null && xgPct < epsGrMin) continue;
+      if (epsGrMax != null && xgPct > epsGrMax) continue;
     }
     vals.push(m as number);
   }

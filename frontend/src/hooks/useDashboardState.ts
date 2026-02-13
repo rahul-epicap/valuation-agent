@@ -14,8 +14,10 @@ export interface DashboardState {
   hlTk: Set<string>;
   hlSrch: string;
   exSrch: string;
-  grMin: number | null;
-  grMax: number | null;
+  revGrMin: number | null;
+  revGrMax: number | null;
+  epsGrMin: number | null;
+  epsGrMax: number | null;
 }
 
 type Action =
@@ -34,8 +36,10 @@ type Action =
   | { type: 'EXCLUDE_VISIBLE'; payload: string[] }
   | { type: 'SET_HL_SEARCH'; payload: string }
   | { type: 'SET_EX_SEARCH'; payload: string }
-  | { type: 'SET_GROWTH_MIN'; payload: number | null }
-  | { type: 'SET_GROWTH_MAX'; payload: number | null };
+  | { type: 'SET_REV_GROWTH_MIN'; payload: number | null }
+  | { type: 'SET_REV_GROWTH_MAX'; payload: number | null }
+  | { type: 'SET_EPS_GROWTH_MIN'; payload: number | null }
+  | { type: 'SET_EPS_GROWTH_MAX'; payload: number | null };
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -93,10 +97,14 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, hlSrch: action.payload };
     case 'SET_EX_SEARCH':
       return { ...state, exSrch: action.payload };
-    case 'SET_GROWTH_MIN':
-      return { ...state, grMin: action.payload };
-    case 'SET_GROWTH_MAX':
-      return { ...state, grMax: action.payload };
+    case 'SET_REV_GROWTH_MIN':
+      return { ...state, revGrMin: action.payload };
+    case 'SET_REV_GROWTH_MAX':
+      return { ...state, revGrMax: action.payload };
+    case 'SET_EPS_GROWTH_MIN':
+      return { ...state, epsGrMin: action.payload };
+    case 'SET_EPS_GROWTH_MAX':
+      return { ...state, epsGrMax: action.payload };
     default:
       return state;
   }
@@ -115,8 +123,10 @@ export function createInitialState(data: DashboardData): DashboardState {
     hlTk: new Set(),
     hlSrch: '',
     exSrch: '',
-    grMin: null,
-    grMax: null,
+    revGrMin: null,
+    revGrMax: null,
+    epsGrMin: null,
+    epsGrMax: null,
   };
 }
 

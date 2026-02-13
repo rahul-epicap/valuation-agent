@@ -39,7 +39,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
     const avgs: (number | null)[] = [];
     const q75s: (number | null)[] = [];
     for (let di = 0; di < data.dates.length; di++) {
-      const vals = filterMultiples(data, type, di, activeTickers, state.grMin, state.grMax);
+      const vals = filterMultiples(data, type, di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax);
       if (vals.length < 4) {
         avgs.push(null);
         q75s.push(null);
@@ -50,7 +50,7 @@ export default function MultiplesChart({ data, state, dispatch }: MultiplesChart
       q75s.push(+vals[Math.floor(vals.length * 0.75)].toFixed(2));
     }
     return { avgs, q75s };
-  }, [data, type, activeTickers, state.grMin, state.grMax]);
+  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
 
   const percentileDatasets = useMemo(() => {
     const valid = avgs.filter((v): v is number => v != null);

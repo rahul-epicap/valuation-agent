@@ -38,7 +38,7 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
   const slopes = useMemo(() => {
     const result: (number | null)[] = [];
     for (let di = 0; di < data.dates.length; di++) {
-      const pts = filterPoints(data, type, di, activeTickers, state.grMin, state.grMax);
+      const pts = filterPoints(data, type, di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax);
       if (pts.length < 5) {
         result.push(null);
         continue;
@@ -47,7 +47,7 @@ export default function SlopeChart({ data, state, dispatch }: SlopeChartProps) {
       result.push(rg ? +rg.slope.toFixed(6) : null);
     }
     return result;
-  }, [data, type, activeTickers, state.grMin, state.grMax]);
+  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
 
   const percentileDatasets = useMemo(() => {
     const valid = slopes.filter((v): v is number => v != null);

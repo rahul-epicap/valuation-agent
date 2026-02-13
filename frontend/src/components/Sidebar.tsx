@@ -26,8 +26,10 @@ export default function Sidebar({ data, state, dispatch, allIndustries }: Sideba
         dispatch={dispatch}
       />
       <GrowthRateFilter
-        grMin={state.grMin}
-        grMax={state.grMax}
+        revGrMin={state.revGrMin}
+        revGrMax={state.revGrMax}
+        epsGrMin={state.epsGrMin}
+        epsGrMax={state.epsGrMax}
         dispatch={dispatch}
       />
       <TickerHighlight
