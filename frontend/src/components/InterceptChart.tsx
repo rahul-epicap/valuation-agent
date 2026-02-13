@@ -66,7 +66,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
       {
         label: 'P25',
         data: Array(len).fill(p25),
-        borderColor: 'rgba(136,146,166,.4)',
+        borderColor: 'rgba(136,146,166,.7)',
         borderDash: [4, 4],
         borderWidth: 1,
         pointRadius: 0,
@@ -77,7 +77,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
       {
         label: 'Median',
         data: Array(len).fill(p50),
-        borderColor: 'rgba(136,146,166,.6)',
+        borderColor: 'rgba(136,146,166,.9)',
         borderDash: [4, 4],
         borderWidth: 1.5,
         pointRadius: 0,
@@ -88,7 +88,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
       {
         label: 'P75',
         data: Array(len).fill(p75),
-        borderColor: 'rgba(136,146,166,.4)',
+        borderColor: 'rgba(136,146,166,.7)',
         borderDash: [4, 4],
         borderWidth: 1,
         pointRadius: 0,
@@ -170,7 +170,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_INT', payload: t })} />
       </div>
-      <div className="relative w-full" style={chartHeight > 0 ? { height: chartHeight } : { height: '100%' }}>
+      <div className={`relative w-full ${chartHeight === 0 ? 'flex-1 min-h-0' : ''}`} style={chartHeight > 0 ? { height: chartHeight } : undefined}>
         <Line data={{ labels: data.dates.slice(startDi, endDi + 1), datasets }} options={options} />
       </div>
     </div>

@@ -12,21 +12,47 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
+interface MonthEntry {
+  key: string;       // "YYYY-MM"
+  label: string;     // "MMM YYYY"
+  firstDi: number;   // first date index in this month
+  lastDi: number;    // last date index in this month
+}
+
 export default function ChartContainer({ dates, children }: ChartContainerProps) {
   const [fullscreen, setFullscreen] = useState(false);
-  const [rawStartDi, setStartDi] = useState(0);
-  const [rawEndDi, setEndDi] = useState(dates.length - 1);
+
+  // Build unique month list from dates
+  const months = useMemo(() => {
+    const result: MonthEntry[] = [];
+    for (let i = 0; i < dates.length; i++) {
+      const key = dates[i].slice(0, 7); // "YYYY-MM"
+      if (result.length === 0 || result[result.length - 1].key !== key) {
+        result.push({ key, label: formatDate(dates[i]), firstDi: i, lastDi: i });
+      } else {
+        result[result.length - 1].lastDi = i;
+      }
+    }
+    return result;
+  }, [dates]);
+
+  const [rawStartMi, setStartMi] = useState(0);
+  const [rawEndMi, setEndMi] = useState(months.length - 1);
 
   // Clamp to valid range without setState in effect
-  const maxDi = dates.length - 1;
-  const startDi = useMemo(() => Math.min(rawStartDi, maxDi - 1), [rawStartDi, maxDi]);
-  const endDi = useMemo(() => Math.max(Math.min(rawEndDi, maxDi), startDi), [rawEndDi, maxDi, startDi]);
+  const maxMi = months.length - 1;
+  const startMi = useMemo(() => Math.min(rawStartMi, maxMi - 1), [rawStartMi, maxMi]);
+  const endMi = useMemo(() => Math.max(Math.min(rawEndMi, maxMi), startMi), [rawEndMi, maxMi, startMi]);
 
-  const isNarrowed = startDi !== 0 || endDi !== maxDi;
+  // Derive date indices from selected months
+  const startDi = months[startMi]?.firstDi ?? 0;
+  const endDi = months[endMi]?.lastDi ?? dates.length - 1;
+
+  const isNarrowed = startMi !== 0 || endMi !== maxMi;
 
   const handleReset = () => {
-    setStartDi(0);
-    setEndDi(maxDi);
+    setStartMi(0);
+    setEndMi(maxMi);
   };
 
   const handleEscape = useCallback(
@@ -47,11 +73,11 @@ export default function ChartContainer({ dates, children }: ChartContainerProps)
     <div className="flex items-center gap-2 mb-2 flex-wrap" style={{ fontSize: '11px' }}>
       <label style={{ color: 'var(--t3)' }}>From</label>
       <select
-        value={startDi}
+        value={startMi}
         onChange={(e) => {
           const v = Number(e.target.value);
-          setStartDi(v);
-          if (v >= endDi) setEndDi(Math.min(v + 1, maxDi));
+          setStartMi(v);
+          if (v >= endMi) setEndMi(Math.min(v + 1, maxMi));
         }}
         className="outline-none rounded cursor-pointer"
         style={{
@@ -62,20 +88,20 @@ export default function ChartContainer({ dates, children }: ChartContainerProps)
           fontSize: '10.5px',
         }}
       >
-        {dates.map((d, i) => (
-          <option key={i} value={i}>
-            {formatDate(d)}
+        {months.map((m, i) => (
+          <option key={m.key} value={i}>
+            {m.label}
           </option>
         ))}
       </select>
 
       <label style={{ color: 'var(--t3)' }}>To</label>
       <select
-        value={endDi}
+        value={endMi}
         onChange={(e) => {
           const v = Number(e.target.value);
-          setEndDi(v);
-          if (v <= startDi) setStartDi(Math.max(v - 1, 0));
+          setEndMi(v);
+          if (v <= startMi) setStartMi(Math.max(v - 1, 0));
         }}
         className="outline-none rounded cursor-pointer"
         style={{
@@ -86,9 +112,9 @@ export default function ChartContainer({ dates, children }: ChartContainerProps)
           fontSize: '10.5px',
         }}
       >
-        {dates.map((d, i) => (
-          <option key={i} value={i}>
-            {formatDate(d)}
+        {months.map((m, i) => (
+          <option key={m.key} value={i}>
+            {m.label}
           </option>
         ))}
       </select>
@@ -160,7 +186,7 @@ export default function ChartContainer({ dates, children }: ChartContainerProps)
               &times;
             </button>
           </div>
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 flex flex-col [&>div]:flex-1 [&>div]:flex [&>div]:flex-col [&>div]:min-h-0">
             {children({ startDi, endDi, chartHeight: 0 })}
           </div>
         </div>
