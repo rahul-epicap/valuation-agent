@@ -35,8 +35,8 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
   );
 
   const pts = useMemo(
-    () => filterPoints(data, type, state.di, activeTickers, state.epsCap),
-    [data, type, state.di, activeTickers, state.epsCap]
+    () => filterPoints(data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax),
+    [data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
   );
 
   const regression = useMemo(

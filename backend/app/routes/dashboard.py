@@ -1,9 +1,14 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["dashboard"])
 
@@ -62,3 +67,63 @@ async def get_dashboard_data_by_id(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return snapshot.dashboard_data
+
+
+class SnapshotImportRequest(BaseModel):
+    name: str
+    dashboard_data: dict
+
+
+@router.post("/snapshot/import")
+async def import_snapshot(
+    body: SnapshotImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Import raw dashboard JSON as a new snapshot.
+
+    Used by the daily update script to sync local data to production.
+    """
+    data = body.dashboard_data
+
+    # Validate required top-level keys
+    required_keys = {"dates", "tickers", "industries", "fm"}
+    missing = required_keys - set(data.keys())
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"dashboard_data missing required keys: {sorted(missing)}",
+        )
+
+    ticker_count = len(data.get("tickers", []))
+    date_count = len(data.get("dates", []))
+    industry_count = len(set(data.get("industries", {}).values()))
+
+    snapshot = Snapshot(
+        name=body.name,
+        dashboard_data=data,
+        source_filename="imported",
+        ticker_count=ticker_count,
+        date_count=date_count,
+        industry_count=industry_count,
+    )
+    db.add(snapshot)
+    await db.commit()
+    await db.refresh(snapshot)
+
+    logger.info(
+        "Imported snapshot id=%d: %d tickers, %d dates, %d industries",
+        snapshot.id,
+        ticker_count,
+        date_count,
+        industry_count,
+    )
+
+    return {
+        "id": snapshot.id,
+        "name": snapshot.name,
+        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+        "source_filename": snapshot.source_filename,
+        "ticker_count": ticker_count,
+        "date_count": date_count,
+        "industry_count": industry_count,
+    }

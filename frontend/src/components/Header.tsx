@@ -2,6 +2,7 @@
 
 import { DashboardData, SnapshotMeta } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
+import DatePicker from './DatePicker';
 
 interface HeaderProps {
   data: DashboardData;
@@ -11,6 +12,8 @@ interface HeaderProps {
   activeSnapshotId?: number;
   onSnapshotChange: (id: number) => void;
   onUploadClick: () => void;
+  onUpdateClick: () => void;
+  updating: boolean;
 }
 
 export default function Header({
@@ -21,6 +24,8 @@ export default function Header({
   activeSnapshotId,
   onSnapshotChange,
   onUploadClick,
+  onUpdateClick,
+  updating,
 }: HeaderProps) {
   return (
     <header
@@ -39,59 +44,12 @@ export default function Header({
         </p>
       </div>
       <div className="flex items-center gap-2.5 flex-wrap">
-        {/* EPS Cap Toggle */}
-        <div className="flex items-center gap-1.5" style={{ fontSize: '11px', color: 'var(--t2)' }}>
-          <label className="cursor-pointer select-none flex items-center gap-1.5">
-            <span className="relative inline-block" style={{ width: 34, height: 18 }}>
-              <input
-                type="checkbox"
-                checked={state.epsCap}
-                onChange={(e) => dispatch({ type: 'SET_EPS_CAP', payload: e.target.checked })}
-                className="opacity-0 w-0 h-0 absolute"
-              />
-              <span
-                className="absolute inset-0 rounded-full transition-colors duration-200"
-                style={{
-                  background: state.epsCap ? 'var(--amber)' : 'var(--bg3)',
-                  border: `1px solid ${state.epsCap ? 'var(--amber)' : 'var(--brd)'}`,
-                }}
-              >
-                <span
-                  className="absolute rounded-full transition-transform duration-200"
-                  style={{
-                    height: 12,
-                    width: 12,
-                    left: 2,
-                    bottom: 2,
-                    background: state.epsCap ? '#fff' : 'var(--t3)',
-                    transform: state.epsCap ? 'translateX(16px)' : 'translateX(0)',
-                  }}
-                />
-              </span>
-            </span>
-            Cap EPS Growth &gt;150%
-          </label>
-        </div>
-
-        {/* Date Selector */}
-        <select
-          value={state.di}
-          onChange={(e) => dispatch({ type: 'SET_DATE', payload: Number(e.target.value) })}
-          className="outline-none cursor-pointer"
-          style={{
-            background: 'var(--bg2)',
-            border: '1px solid var(--brd)',
-            color: 'var(--t1)',
-            padding: '6px 10px',
-            borderRadius: '7px',
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: '11.5px',
-          }}
-        >
-          {data.dates.map((d, i) => (
-            <option key={i} value={i}>{d}</option>
-          ))}
-        </select>
+        {/* Date Picker */}
+        <DatePicker
+          dates={data.dates}
+          selectedIndex={state.di}
+          onSelect={(i) => dispatch({ type: 'SET_DATE', payload: i })}
+        />
 
         {/* Snapshot Selector */}
         {snapshots.length > 1 && (
@@ -114,6 +72,16 @@ export default function Header({
             ))}
           </select>
         )}
+
+        {/* Update Button */}
+        <button
+          onClick={onUpdateClick}
+          disabled={updating}
+          className="text-xs font-semibold px-3 py-1.5 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ background: 'var(--green)', color: '#fff' }}
+        >
+          {updating ? 'Updating…' : 'Update Data'}
+        </button>
 
         {/* Upload Button */}
         <button

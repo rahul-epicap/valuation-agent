@@ -35,3 +35,28 @@ export async function uploadExcel(file: File, name?: string): Promise<SnapshotMe
 export function getTemplateUrl(): string {
   return `${API_BASE}/api/template`;
 }
+
+export interface BloombergUpdateResponse {
+  id: number | null;
+  skipped: boolean;
+  message?: string;
+  date_count: number;
+  ticker_count?: number;
+  industry_count?: number;
+  previous_date_count?: number;
+}
+
+export async function triggerBloombergUpdate(
+  lookbackDays: number = 5,
+): Promise<BloombergUpdateResponse> {
+  const res = await fetch(`${API_BASE}/api/bloomberg/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lookback_days: lookbackDays, periodicity: 'DAILY' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Bloomberg update failed' }));
+    throw new Error(err.detail || 'Bloomberg update failed');
+  }
+  return res.json();
+}

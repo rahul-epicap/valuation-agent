@@ -50,6 +50,12 @@ class BloombergFetchRequest(BaseModel):
         return v
 
 
+class BloombergUpdateRequest(BaseModel):
+    lookback_days: int = 5
+    periodicity: Literal["DAILY", "WEEKLY", "MONTHLY"] = "DAILY"
+    name: str | None = None
+
+
 @router.post("/bloomberg/fetch")
 async def fetch_bloomberg_data(
     body: BloombergFetchRequest | None = None,
@@ -107,4 +113,92 @@ async def fetch_bloomberg_data(
         "ticker_count": ticker_count,
         "date_count": date_count,
         "industry_count": industry_count,
+    }
+
+
+@router.post("/bloomberg/update")
+async def update_bloomberg_data(
+    body: BloombergUpdateRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Incremental Bloomberg update: fetch only recent data and merge with latest snapshot."""
+    service = _get_service()
+
+    if body is None:
+        body = BloombergUpdateRequest()
+
+    # Load the latest snapshot as the base for merging
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(Snapshot).order_by(Snapshot.created_at.desc()).limit(1)
+    )
+    latest_snapshot = result.scalar_one_or_none()
+    existing_data = latest_snapshot.dashboard_data if latest_snapshot else {}
+
+    try:
+        merged_data = await service.fetch_incremental(
+            existing_data=existing_data,
+            lookback_days=body.lookback_days,
+            periodicity=body.periodicity,
+        )
+    except Exception as e:
+        logger.exception("Bloomberg incremental fetch failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Bloomberg incremental fetch failed: {e}",
+        ) from e
+
+    # Skip snapshot creation if no new trading days were added
+    existing_dates = existing_data.get("dates", [])
+    merged_dates = merged_data.get("dates", [])
+    if merged_dates == existing_dates:
+        logger.info("No new trading days — skipping snapshot creation")
+        return {
+            "id": latest_snapshot.id if latest_snapshot else None,
+            "skipped": True,
+            "message": "No new trading days since last snapshot",
+            "date_count": len(existing_dates),
+        }
+
+    # Generate name
+    name = body.name
+    if not name:
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        name = f"Bloomberg Update — {timestamp}"
+
+    ticker_count = len(merged_data.get("tickers", []))
+    date_count = len(merged_dates)
+    industry_count = len(set(merged_data.get("industries", {}).values()))
+
+    snapshot = Snapshot(
+        name=name,
+        dashboard_data=merged_data,
+        source_filename="bloomberg-incremental",
+        ticker_count=ticker_count,
+        date_count=date_count,
+        industry_count=industry_count,
+    )
+    db.add(snapshot)
+    await db.commit()
+    await db.refresh(snapshot)
+
+    prev_date_count = len(existing_dates)
+    logger.info(
+        "Incremental snapshot created: id=%d, dates %d→%d",
+        snapshot.id,
+        prev_date_count,
+        date_count,
+    )
+
+    return {
+        "id": snapshot.id,
+        "name": snapshot.name,
+        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+        "source_filename": snapshot.source_filename,
+        "ticker_count": ticker_count,
+        "date_count": date_count,
+        "industry_count": industry_count,
+        "previous_date_count": prev_date_count,
+        "skipped": False,
     }

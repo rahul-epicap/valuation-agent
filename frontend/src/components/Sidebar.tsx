@@ -3,6 +3,7 @@
 import { DashboardData } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import IndustryFilter from './IndustryFilter';
+import GrowthRateFilter from './GrowthRateFilter';
 import TickerHighlight from './TickerHighlight';
 import TickerExclusions from './TickerExclusions';
 
@@ -22,6 +23,13 @@ export default function Sidebar({ data, state, dispatch, allIndustries }: Sideba
       <IndustryFilter
         allIndustries={allIndustries}
         activeIndustries={state.indOn}
+        dispatch={dispatch}
+      />
+      <GrowthRateFilter
+        revGrMin={state.revGrMin}
+        revGrMax={state.revGrMax}
+        epsGrMin={state.epsGrMin}
+        epsGrMax={state.epsGrMax}
         dispatch={dispatch}
       />
       <TickerHighlight

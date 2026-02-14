@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { DashboardData, SnapshotMeta } from '../lib/types';
-import { fetchDashboardData, fetchSnapshots } from '../lib/api';
+import { fetchDashboardData, fetchSnapshots, triggerBloombergUpdate } from '../lib/api';
 import { useDashboardState } from '../hooks/useDashboardState';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
 import RegressionChart from '../components/RegressionChart';
 import MultiplesChart from '../components/MultiplesChart';
 import SlopeChart from '../components/SlopeChart';
+import InterceptChart from '../components/InterceptChart';
+import ChartContainer from '../components/ChartContainer';
 import UploadModal from '../components/UploadModal';
 
 export default function DashboardPage() {
@@ -18,6 +20,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [activeSnapshotId, setActiveSnapshotId] = useState<number | undefined>();
+  const [updating, setUpdating] = useState(false);
 
   const loadData = useCallback(async (snapshotId?: number) => {
     try {
@@ -49,6 +52,21 @@ export default function DashboardPage() {
   const handleUploadSuccess = () => {
     setShowUpload(false);
     loadData();
+  };
+
+  const handleUpdate = async () => {
+    try {
+      setUpdating(true);
+      const resp = await triggerBloombergUpdate();
+      if (resp.skipped) {
+        alert(resp.message || 'No new trading days since last snapshot');
+      }
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bloomberg update failed');
+    } finally {
+      setUpdating(false);
+    }
   };
 
   if (loading) {
@@ -91,6 +109,8 @@ export default function DashboardPage() {
       activeSnapshotId={activeSnapshotId}
       onSnapshotChange={handleSnapshotChange}
       onUploadClick={() => setShowUpload(true)}
+      onUpdateClick={handleUpdate}
+      updating={updating}
       showUpload={showUpload}
       onUploadClose={() => setShowUpload(false)}
       onUploadSuccess={handleUploadSuccess}
@@ -104,6 +124,8 @@ function DashboardContent({
   activeSnapshotId,
   onSnapshotChange,
   onUploadClick,
+  onUpdateClick,
+  updating,
   showUpload,
   onUploadClose,
   onUploadSuccess,
@@ -113,6 +135,8 @@ function DashboardContent({
   activeSnapshotId?: number;
   onSnapshotChange: (id: number) => void;
   onUploadClick: () => void;
+  onUpdateClick: () => void;
+  updating: boolean;
   showUpload: boolean;
   onUploadClose: () => void;
   onUploadSuccess: () => void;
@@ -129,6 +153,8 @@ function DashboardContent({
         activeSnapshotId={activeSnapshotId}
         onSnapshotChange={onSnapshotChange}
         onUploadClick={onUploadClick}
+        onUpdateClick={onUpdateClick}
+        updating={updating}
       />
       <div className="grid" style={{ gridTemplateColumns: '260px 1fr', height: 'calc(100vh - 53px)' }}>
         <Sidebar
@@ -143,10 +169,28 @@ function DashboardContent({
           </div>
           <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <MultiplesChart data={data} state={state} dispatch={dispatch} />
+              <ChartContainer dates={data.dates}>
+                {({ startDi, endDi, chartHeight }) => (
+                  <MultiplesChart data={data} state={state} dispatch={dispatch}
+                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                )}
+              </ChartContainer>
             </div>
             <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <SlopeChart data={data} state={state} dispatch={dispatch} />
+              <ChartContainer dates={data.dates}>
+                {({ startDi, endDi, chartHeight }) => (
+                  <SlopeChart data={data} state={state} dispatch={dispatch}
+                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                )}
+              </ChartContainer>
+            </div>
+            <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+              <ChartContainer dates={data.dates}>
+                {({ startDi, endDi, chartHeight }) => (
+                  <InterceptChart data={data} state={state} dispatch={dispatch}
+                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                )}
+              </ChartContainer>
             </div>
           </div>
         </main>
