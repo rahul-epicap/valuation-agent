@@ -12,6 +12,7 @@ import SlopeChart from '../components/SlopeChart';
 import InterceptChart from '../components/InterceptChart';
 import ChartContainer from '../components/ChartContainer';
 import UploadModal from '../components/UploadModal';
+import ValueScoreView from '../components/ValueScoreView';
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -164,35 +165,41 @@ function DashboardContent({
           allIndustries={allIndustries}
         />
         <main className="overflow-y-auto" style={{ padding: '16px 20px' }}>
-          <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-            <RegressionChart data={data} state={state} dispatch={dispatch} />
-          </div>
-          <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <ChartContainer dates={data.dates}>
-                {({ startDi, endDi, chartHeight }) => (
-                  <MultiplesChart data={data} state={state} dispatch={dispatch}
-                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
-                )}
-              </ChartContainer>
-            </div>
-            <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <ChartContainer dates={data.dates}>
-                {({ startDi, endDi, chartHeight }) => (
-                  <SlopeChart data={data} state={state} dispatch={dispatch}
-                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
-                )}
-              </ChartContainer>
-            </div>
-            <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
-              <ChartContainer dates={data.dates}>
-                {({ startDi, endDi, chartHeight }) => (
-                  <InterceptChart data={data} state={state} dispatch={dispatch}
-                    startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
-                )}
-              </ChartContainer>
-            </div>
-          </div>
+          {state.view === 'valueScore' ? (
+            <ValueScoreView data={data} state={state} dispatch={dispatch} />
+          ) : (
+            <>
+              <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                <RegressionChart data={data} state={state} dispatch={dispatch} />
+              </div>
+              <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                  <ChartContainer dates={data.dates}>
+                    {({ startDi, endDi, chartHeight }) => (
+                      <MultiplesChart data={data} state={state} dispatch={dispatch}
+                        startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                    )}
+                  </ChartContainer>
+                </div>
+                <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                  <ChartContainer dates={data.dates}>
+                    {({ startDi, endDi, chartHeight }) => (
+                      <SlopeChart data={data} state={state} dispatch={dispatch}
+                        startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                    )}
+                  </ChartContainer>
+                </div>
+                <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                  <ChartContainer dates={data.dates}>
+                    {({ startDi, endDi, chartHeight }) => (
+                      <InterceptChart data={data} state={state} dispatch={dispatch}
+                        startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                    )}
+                  </ChartContainer>
+                </div>
+              </div>
+            </>
+          )}
         </main>
       </div>
       {showUpload && (
