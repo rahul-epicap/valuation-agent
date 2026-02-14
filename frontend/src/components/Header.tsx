@@ -1,7 +1,7 @@
 'use client';
 
 import { DashboardData, SnapshotMeta } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { DashboardState, ViewMode } from '../hooks/useDashboardState';
 import DatePicker from './DatePicker';
 
 interface HeaderProps {
@@ -44,6 +44,12 @@ export default function Header({
         </p>
       </div>
       <div className="flex items-center gap-2.5 flex-wrap">
+        {/* View Toggle */}
+        <ViewToggle
+          active={state.view}
+          onChange={(v) => dispatch({ type: 'SET_VIEW', payload: v })}
+        />
+
         {/* Date Picker */}
         <DatePicker
           dates={data.dates}
@@ -93,5 +99,29 @@ export default function Header({
         </button>
       </div>
     </header>
+  );
+}
+
+const VIEW_OPTIONS: { key: ViewMode; label: string }[] = [
+  { key: 'charts', label: 'Charts' },
+  { key: 'valueScore', label: 'Value Score' },
+];
+
+function ViewToggle({ active, onChange }: { active: ViewMode; onChange: (v: ViewMode) => void }) {
+  return (
+    <div className="flex gap-0.5 rounded p-0.5" style={{ background: 'var(--bg0)' }}>
+      {VIEW_OPTIONS.map(({ key, label }) => (
+        <button
+          key={key}
+          onClick={() => onChange(key)}
+          className={`px-2.5 py-1 rounded text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
+            active === key ? 'bg-blue-500 text-white' : ''
+          }`}
+          style={active !== key ? { color: 'var(--t3)', background: 'transparent' } : {}}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

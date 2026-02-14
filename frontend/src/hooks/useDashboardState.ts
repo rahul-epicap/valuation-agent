@@ -3,7 +3,10 @@
 import { useReducer, useMemo } from 'react';
 import { DashboardData, MetricType } from '../lib/types';
 
+export type ViewMode = 'charts' | 'valueScore';
+
 export interface DashboardState {
+  view: ViewMode;
   reg: MetricType;
   mul: MetricType;
   slp: MetricType;
@@ -21,6 +24,7 @@ export interface DashboardState {
 }
 
 type Action =
+  | { type: 'SET_VIEW'; payload: ViewMode }
   | { type: 'SET_REG'; payload: MetricType }
   | { type: 'SET_MUL'; payload: MetricType }
   | { type: 'SET_SLP'; payload: MetricType }
@@ -43,6 +47,8 @@ type Action =
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
+    case 'SET_VIEW':
+      return { ...state, view: action.payload };
     case 'SET_REG':
       return { ...state, reg: action.payload };
     case 'SET_MUL':
@@ -113,6 +119,7 @@ function reducer(state: DashboardState, action: Action): DashboardState {
 export function createInitialState(data: DashboardData): DashboardState {
   const allIndustries = [...new Set(Object.values(data.industries))].sort();
   return {
+    view: 'charts',
     reg: 'evRev',
     mul: 'evRev',
     slp: 'evRev',
