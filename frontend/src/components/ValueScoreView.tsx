@@ -1,18 +1,21 @@
 'use client';
 
 import { useMemo } from 'react';
-import { DashboardData, MetricType, METRIC_LABELS } from '../lib/types';
+import { DashboardData, MetricType, METRIC_LABELS, COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers } from '../lib/filters';
 import {
   computeHistoricalBaseline,
-  computeValueScores,
+  computeSingleTickerScore,
+  computeDeviationTimeSeries,
   HistoricalBaseline,
-  ValueScoreEntry,
+  SingleTickerScore,
 } from '../lib/valueScore';
 import MetricToggle from './MetricToggle';
 import ValueScoreBaseline from './ValueScoreBaseline';
-import ValueScoreCard from './ValueScoreCard';
+import TickerSearchSelect from './TickerSearchSelect';
+import CompanyHeader from './CompanyHeader';
+import DeviationChart from './DeviationChart';
 
 interface ValueScoreViewProps {
   data: DashboardData;
@@ -22,13 +25,14 @@ interface ValueScoreViewProps {
 
 export default function ValueScoreView({ data, state, dispatch }: ValueScoreViewProps) {
   const metricType: MetricType = state.reg;
+  const ticker = state.vsTicker;
 
   const activeTickers = useMemo(
     () => getActiveTickers(data, state.exTk, state.indOn),
     [data, state.exTk, state.indOn]
   );
 
-  // Expensive: recompute only when data/metric/filters/tickers change
+  // Expensive: historical baselines (recompute only when data/metric/filters change)
   const baselineFull = useMemo(
     () =>
       computeHistoricalBaseline(
@@ -48,153 +52,268 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
     [data, metricType, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
   );
 
-  // Cheap: recompute when baseline or selected date changes
-  const scoresFull = useMemo(
+  // Cheap: single-ticker scores against each baseline
+  const scoreFull = useMemo(
     () =>
-      baselineFull
-        ? computeValueScores(
-            data, metricType, state.di, activeTickers,
-            state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax,
-            baselineFull
-          )
-        : [],
-    [data, metricType, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, baselineFull]
+      ticker && baselineFull
+        ? computeSingleTickerScore(data, ticker, metricType, state.di, baselineFull)
+        : null,
+    [data, ticker, metricType, state.di, baselineFull]
   );
 
-  const scoresEx2021 = useMemo(
+  const scoreEx2021 = useMemo(
     () =>
-      baselineEx2021
-        ? computeValueScores(
-            data, metricType, state.di, activeTickers,
-            state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax,
-            baselineEx2021
-          )
-        : [],
-    [data, metricType, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, baselineEx2021]
+      ticker && baselineEx2021
+        ? computeSingleTickerScore(data, ticker, metricType, state.di, baselineEx2021)
+        : null,
+    [data, ticker, metricType, state.di, baselineEx2021]
   );
 
-  // Build highlight index map for highlighted tickers
-  const hlIndexMap = useMemo(() => {
-    const map = new Map<string, number>();
-    let i = 0;
-    for (const t of state.hlTk) {
-      map.set(t, i++);
-    }
-    return map;
-  }, [state.hlTk]);
+  // Expensive: deviation time series (only compute when ticker is selected)
+  const deviationFull = useMemo(
+    () =>
+      ticker
+        ? computeDeviationTimeSeries(
+            data, ticker, metricType, activeTickers,
+            state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax
+          )
+        : [],
+    [data, ticker, metricType, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
+  );
 
-  const dateLabel = data.dates[state.di]
-    ? new Date(data.dates[state.di] + 'T00:00:00').toLocaleDateString('en-US', {
-        month: 'short',
-        year: 'numeric',
-      })
-    : '';
+  const deviationEx2021 = useMemo(
+    () =>
+      ticker
+        ? computeDeviationTimeSeries(
+            data, ticker, metricType, activeTickers,
+            state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax,
+            2021
+          )
+        : [],
+    [data, ticker, metricType, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
+  );
 
   return (
     <div>
-      {/* Header row: metric toggle + date */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Header row: ticker search + metric toggle */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <TickerSearchSelect
+          tickers={data.tickers}
+          industries={data.industries}
+          selected={ticker}
+          onSelect={(t) => dispatch({ type: 'SET_VS_TICKER', payload: t })}
+        />
         <MetricToggle
           active={metricType}
           onChange={(t) => dispatch({ type: 'SET_REG', payload: t })}
         />
-        <span
-          className="text-xs font-semibold"
-          style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--t3)' }}
-        >
-          {METRIC_LABELS[metricType]} &middot; {dateLabel}
-        </span>
       </div>
 
-      {/* Two-column layout */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <ScoreColumn
-          title="Full History"
-          subtitle={`${data.dates[0]?.slice(0, 4)}\u2013${data.dates[data.dates.length - 1]?.slice(0, 4)}`}
-          baseline={baselineFull}
-          scores={scoresFull}
-          metricType={metricType}
-          hlIndexMap={hlIndexMap}
-        />
-        <ScoreColumn
-          title="Excluding 2021"
-          subtitle="Removes COVID distortion"
-          baseline={baselineEx2021}
-          scores={scoresEx2021}
-          metricType={metricType}
-          hlIndexMap={hlIndexMap}
-        />
-      </div>
-
-      {/* How to Read */}
-      <div
-        className="mt-4 rounded-xl p-4"
-        style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}
-      >
-        <h3
-          className="text-xs font-bold mb-2"
-          style={{ color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}
+      {/* Empty state */}
+      {!ticker && (
+        <div
+          className="rounded-xl p-12 text-center"
+          style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}
         >
-          How to Read
-        </h3>
-        <p className="text-xs leading-relaxed" style={{ color: 'var(--t3)' }}>
-          Each card compares a ticker&apos;s current {METRIC_LABELS[metricType]} multiple to what a historical average
-          regression line would predict given its growth rate. <strong style={{ color: 'var(--green)' }}>Negative %</strong> =
-          trading below the historical norm (potentially undervalued). <strong style={{ color: 'var(--red)' }}>Positive %</strong> =
-          trading above (potentially overvalued). The &ldquo;Excluding 2021&rdquo; column removes pandemic-era distortion
-          from the baseline regression.
-        </p>
-      </div>
+          <div
+            className="text-lg font-bold mb-2"
+            style={{ color: 'var(--t2)' }}
+          >
+            Select a Ticker
+          </div>
+          <p className="text-xs" style={{ color: 'var(--t3)', maxWidth: 360, margin: '0 auto' }}>
+            Search for a company above to see its regression-based valuation analysis.
+            The analysis compares the ticker&apos;s current multiple to what the historical
+            regression predicts given its growth rate.
+          </p>
+        </div>
+      )}
+
+      {/* Analysis content */}
+      {ticker && (
+        <>
+          <CompanyHeader data={data} ticker={ticker} dateIndex={state.di} />
+
+          {/* Historical Regression Analysis */}
+          <div
+            className="rounded-xl p-4 mb-4"
+            style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}
+          >
+            <h3
+              className="text-sm font-bold mb-3"
+              style={{ color: 'var(--t1)' }}
+            >
+              Historical Regression Analysis
+            </h3>
+
+            {/* Side-by-side result cards */}
+            <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <ScorePanel
+                title="Full History"
+                subtitle={`${data.dates[0]?.slice(0, 4)}\u2013${data.dates[data.dates.length - 1]?.slice(0, 4)}`}
+                baseline={baselineFull}
+                score={scoreFull}
+                metricType={metricType}
+              />
+              <ScorePanel
+                title="Excluding 2021"
+                subtitle="Removes COVID distortion"
+                baseline={baselineEx2021}
+                score={scoreEx2021}
+                metricType={metricType}
+              />
+            </div>
+
+            {/* Deviation chart */}
+            {deviationFull.length > 0 && (
+              <DeviationChart
+                fullHistory={deviationFull}
+                ex2021={deviationEx2021}
+                currentDateIndex={state.di}
+                metricType={metricType}
+              />
+            )}
+          </div>
+
+          {/* How to Read */}
+          <div
+            className="rounded-xl p-4"
+            style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}
+          >
+            <h3
+              className="text-xs font-bold mb-2"
+              style={{ color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}
+            >
+              How to Read
+            </h3>
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--t3)' }}>
+              The analysis compares this ticker&apos;s current {METRIC_LABELS[metricType]} multiple
+              to what a historical average regression line would predict given its growth rate.{' '}
+              <strong style={{ color: 'var(--green)' }}>Negative %</strong> = trading below the
+              historical norm (potentially undervalued).{' '}
+              <strong style={{ color: 'var(--red)' }}>Positive %</strong> = trading above
+              (potentially overvalued). The &ldquo;Excluding 2021&rdquo; panel removes
+              pandemic-era distortion from the baseline regression. The deviation chart shows
+              how this relationship has evolved over every month in the dataset.
+            </p>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function ScoreColumn({
+function ScorePanel({
   title,
   subtitle,
   baseline,
-  scores,
+  score,
   metricType,
-  hlIndexMap,
 }: {
   title: string;
   subtitle: string;
   baseline: HistoricalBaseline | null;
-  scores: ValueScoreEntry[];
+  score: SingleTickerScore | null;
   metricType: MetricType;
-  hlIndexMap: Map<string, number>;
 }) {
+  const col = COLORS[metricType];
+
   return (
     <div
-      className="rounded-xl p-4 flex flex-col"
-      style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}
+      className="rounded-lg p-4"
+      style={{ background: 'var(--bg0)', border: '1px solid var(--brd)' }}
     >
       <div className="mb-3">
-        <h2 className="text-sm font-bold" style={{ color: 'var(--t1)' }}>
+        <h4 className="text-sm font-bold" style={{ color: 'var(--t1)' }}>
           {title}
-        </h2>
+        </h4>
         <p className="text-xs" style={{ color: 'var(--t3)' }}>
           {subtitle}
         </p>
       </div>
 
-      <ValueScoreBaseline baseline={baseline} metricType={metricType} />
-
-      {scores.length === 0 ? (
-        <p className="text-xs py-8 text-center" style={{ color: 'var(--t3)' }}>
-          No data for this date / filter combination
-        </p>
-      ) : (
-        <div className="flex flex-col gap-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 320px)' }}>
-          {scores.map((entry) => (
-            <ValueScoreCard
-              key={entry.ticker}
-              entry={entry}
-              highlightIndex={hlIndexMap.get(entry.ticker) ?? null}
-            />
-          ))}
+      {/* Score values */}
+      {score ? (
+        <div className="mb-3">
+          <div
+            className="grid gap-2 mb-2"
+            style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
+          >
+            <StatCell label="Actual" value={`${score.actual.toFixed(1)}x`} color={col.m} />
+            <StatCell label="Predicted" value={`${score.predicted.toFixed(1)}x`} color="var(--t2)" />
+            <DeviationBadge pctDiff={score.pctDiff} />
+          </div>
         </div>
+      ) : (
+        <p className="text-xs py-4 text-center mb-3" style={{ color: 'var(--t3)' }}>
+          No data for this ticker / date / metric
+        </p>
       )}
+
+      {/* Baseline stats */}
+      <ValueScoreBaseline baseline={baseline} metricType={metricType} />
+    </div>
+  );
+}
+
+function StatCell({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="rounded text-center" style={{ background: 'var(--bg2)', padding: '9px' }}>
+      <label
+        className="block mb-0.5"
+        style={{
+          fontSize: '8.5px',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.7px',
+          color: 'var(--t3)',
+        }}
+      >
+        {label}
+      </label>
+      <span
+        className="font-bold"
+        style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '16px',
+          color,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function DeviationBadge({ pctDiff }: { pctDiff: number }) {
+  const isUnder = pctDiff < 0;
+  const badgeColor = isUnder ? 'var(--green)' : 'var(--red)';
+  const badgeBg = isUnder ? 'var(--green-d)' : 'var(--red-d)';
+
+  return (
+    <div className="rounded text-center" style={{ background: badgeBg, padding: '9px' }}>
+      <label
+        className="block mb-0.5"
+        style={{
+          fontSize: '8.5px',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.7px',
+          color: 'var(--t3)',
+        }}
+      >
+        Deviation
+      </label>
+      <span
+        className="font-bold"
+        style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '16px',
+          color: badgeColor,
+        }}
+      >
+        {pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(1)}%
+      </span>
     </div>
   );
 }

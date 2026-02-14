@@ -15,6 +15,7 @@ export interface DashboardState {
   indOn: Set<string>;
   exTk: Set<string>;
   hlTk: Set<string>;
+  vsTicker: string | null;
   hlSrch: string;
   exSrch: string;
   revGrMin: number | null;
@@ -38,6 +39,7 @@ type Action =
   | { type: 'TOGGLE_EXCLUSION'; payload: string }
   | { type: 'CLEAR_EXCLUSIONS' }
   | { type: 'EXCLUDE_VISIBLE'; payload: string[] }
+  | { type: 'SET_VS_TICKER'; payload: string | null }
   | { type: 'SET_HL_SEARCH'; payload: string }
   | { type: 'SET_EX_SEARCH'; payload: string }
   | { type: 'SET_REV_GROWTH_MIN'; payload: number | null }
@@ -99,6 +101,8 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       }
       return { ...state, exTk: nextEx, hlTk: nextHl };
     }
+    case 'SET_VS_TICKER':
+      return { ...state, vsTicker: action.payload };
     case 'SET_HL_SEARCH':
       return { ...state, hlSrch: action.payload };
     case 'SET_EX_SEARCH':
@@ -128,6 +132,7 @@ export function createInitialState(data: DashboardData): DashboardState {
     indOn: new Set(allIndustries),
     exTk: new Set(),
     hlTk: new Set(),
+    vsTicker: null,
     hlSrch: '',
     exSrch: '',
     revGrMin: null,
