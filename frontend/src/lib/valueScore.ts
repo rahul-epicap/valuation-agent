@@ -1,5 +1,5 @@
 import { DashboardData, MetricType } from './types';
-import { filterPoints, getActiveTickers } from './filters';
+import { filterPoints } from './filters';
 import { linearRegression } from './regression';
 
 export interface HistoricalBaseline {
@@ -102,11 +102,3 @@ export function computeValueScores(
   return entries;
 }
 
-/** Helper to get active tickers from state params */
-export function getActiveTickersFromState(
-  data: DashboardData,
-  exTk: Set<string>,
-  indOn: Set<string>
-): string[] {
-  return getActiveTickers(data, exTk, indOn);
-}

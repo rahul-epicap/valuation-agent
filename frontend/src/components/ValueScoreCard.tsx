@@ -11,6 +11,7 @@ interface ValueScoreCardProps {
 export default function ValueScoreCard({ entry, highlightIndex }: ValueScoreCardProps) {
   const isUndervalued = entry.pctDiff < 0;
   const badgeColor = isUndervalued ? 'var(--green)' : 'var(--red)';
+  const badgeBg = isUndervalued ? 'var(--green-d)' : 'var(--red-d)';
   const borderColor = highlightIndex != null ? HIGHLIGHT_COLORS[highlightIndex % HIGHLIGHT_COLORS.length] : 'var(--brd)';
 
   return (
@@ -50,7 +51,7 @@ export default function ValueScoreCard({ entry, highlightIndex }: ValueScoreCard
         className="rounded-md px-2.5 py-1 text-sm font-bold whitespace-nowrap"
         style={{
           fontFamily: "'JetBrains Mono', monospace",
-          background: `${badgeColor}20`,
+          background: badgeBg,
           color: badgeColor,
         }}
       >
