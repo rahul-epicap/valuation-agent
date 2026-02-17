@@ -50,6 +50,23 @@ class BloombergFetchRequest(BaseModel):
         return v
 
 
+class BloombergExpandedFetchRequest(BaseModel):
+    name: str | None = None
+    start_date: str = "2010-01-01"
+    end_date: str | None = None
+    start_year: int = 2010
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                datetime.strptime(v, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError(f"Invalid date format '{v}', expected YYYY-MM-DD")
+        return v
+
+
 class BloombergUpdateRequest(BaseModel):
     lookback_days: int = 5
     periodicity: Literal["DAILY", "WEEKLY", "MONTHLY"] = "DAILY"
@@ -97,6 +114,62 @@ async def fetch_bloomberg_data(
         name=name,
         dashboard_data=dashboard_data,
         source_filename="bloomberg-dapi",
+        ticker_count=ticker_count,
+        date_count=date_count,
+        industry_count=industry_count,
+    )
+    db.add(snapshot)
+    await db.commit()
+    await db.refresh(snapshot)
+
+    return {
+        "id": snapshot.id,
+        "name": snapshot.name,
+        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+        "source_filename": snapshot.source_filename,
+        "ticker_count": ticker_count,
+        "date_count": date_count,
+        "industry_count": industry_count,
+    }
+
+
+@router.post("/bloomberg/fetch-expanded")
+async def fetch_expanded_bloomberg_data(
+    body: BloombergExpandedFetchRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch expanded SPX+NDX universe from Bloomberg with weekly data."""
+    service = _get_service()
+
+    if body is None:
+        body = BloombergExpandedFetchRequest()
+
+    try:
+        dashboard_data = await service.fetch_expanded(
+            start_date=body.start_date,
+            end_date=body.end_date,
+            start_year=body.start_year,
+        )
+    except Exception as e:
+        logger.exception("Bloomberg expanded fetch failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Bloomberg expanded fetch failed: {e}",
+        ) from e
+
+    name = body.name
+    if not name:
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        name = f"Bloomberg Expanded — {timestamp}"
+
+    ticker_count = len(dashboard_data.get("tickers", []))
+    date_count = len(dashboard_data.get("dates", []))
+    industry_count = len(set(dashboard_data.get("industries", {}).values()))
+
+    snapshot = Snapshot(
+        name=name,
+        dashboard_data=dashboard_data,
+        source_filename="bloomberg-expanded",
         ticker_count=ticker_count,
         date_count=date_count,
         industry_count=industry_count,
