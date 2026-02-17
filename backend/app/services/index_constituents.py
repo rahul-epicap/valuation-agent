@@ -11,6 +11,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.bloomberg_service import BloombergService
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +43,23 @@ def generate_quarterly_dates(
     return dates
 
 
+# Known US exchange codes returned by Bloomberg BDS
+_US_EXCHANGES = {"US", "UW", "UN", "UA", "UP", "UR", "UF"}
+
+
 def _normalize_ticker(raw: str) -> str:
     """Normalize a ticker to 'XXXX US Equity' format.
 
-    BDS may return tickers as 'AAPL UW' or 'AAPL US' or just 'AAPL'.
-    We strip any exchange suffix and append ' US Equity'.
+    BDS returns tickers as 'AAPL UW' or 'AAPL US' etc.
+    All SPX/NDX constituents are US-listed, so we normalize the exchange
+    code to 'US Equity'.  Returns empty string for invalid input.
     """
     raw = raw.strip()
+    if not raw or raw.lower() == "nan":
+        return ""
 
-    # Already in full format
+    # Already in full format (e.g. "AAPL UW Equity")
     if raw.endswith(" Equity"):
-        # Normalize to US Equity (e.g. "AAPL UW Equity" → "AAPL US Equity")
         parts = raw.rsplit(" ", 2)
         if len(parts) == 3:
             return f"{parts[0]} US Equity"
@@ -58,15 +68,22 @@ def _normalize_ticker(raw: str) -> str:
     # Has exchange code like "AAPL UW" or "AAPL US"
     parts = raw.split()
     if len(parts) >= 2:
-        # Take just the ticker symbol (first part)
-        return f"{parts[0]} US Equity"
+        exchange = parts[-1]
+        ticker_sym = " ".join(parts[:-1])
+        if exchange not in _US_EXCHANGES:
+            logger.debug(
+                "Unexpected exchange code '%s' for ticker '%s', normalizing to US Equity",
+                exchange,
+                raw,
+            )
+        return f"{ticker_sym} US Equity"
 
     # Just a bare ticker
     return f"{raw} US Equity"
 
 
 async def fetch_all_constituents(
-    service: object,
+    service: BloombergService,
     start_year: int = 2010,
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Discover all unique tickers from SPX and NDX historical membership.
@@ -138,9 +155,11 @@ async def fetch_all_constituents(
                 continue
 
             tickers = [
-                _normalize_ticker(str(v))
+                t
                 for v in df[ticker_col]
                 if v is not None and str(v).strip()
+                for t in [_normalize_ticker(str(v))]
+                if t  # filter out empty results from NaN/invalid values
             ]
             all_tickers.update(tickers)
             membership_log[log_key] = tickers

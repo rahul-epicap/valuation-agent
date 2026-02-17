@@ -370,7 +370,7 @@ class BloombergService:
                 logger.warning(
                     "BDH batch failed for field=%s, batch starting with %s — retrying individually",
                     field,
-                    batch[0],
+                    batch[0] if batch else "(empty)",
                 )
                 retried = await self._retry_failed_batch(
                     batch,
@@ -418,13 +418,35 @@ class BloombergService:
                     self._bdh_yearly_sync, batch, field, start_date, end_date
                 )
             except Exception:
-                logger.exception(
-                    "BDH YEARLY query failed for field=%s, batch starting with %s",
+                logger.warning(
+                    "BDH YEARLY batch failed for field=%s, batch starting with %s — retrying individually",
                     field,
-                    batch[0],
+                    batch[0] if batch else "(empty)",
                 )
-                for t in batch:
-                    result.setdefault(t, {})
+                # Retry each ticker individually to salvage data around delisted tickers
+                for ticker in batch:
+                    try:
+                        df = await asyncio.to_thread(
+                            self._bdh_yearly_sync,
+                            [ticker],
+                            field,
+                            start_date,
+                            end_date,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Individual yearly retry failed for %s field=%s (likely delisted)",
+                            ticker,
+                            field,
+                        )
+                        result.setdefault(ticker, {})
+                        continue
+                    if df.empty:
+                        result.setdefault(ticker, {})
+                        continue
+                    parsed = self._parse_bdh_dataframe(df, field)
+                    for t, date_vals in parsed.items():
+                        result.setdefault(t, {}).update(date_vals)
                 continue
 
             if df.empty:
@@ -817,8 +839,13 @@ class BloombergService:
             self, start_year=start_year
         )
         logger.info(
-            "Phase 1 complete: %d unique tickers discovered", len(discovered_tickers)
+            "Phase 1 complete: %d unique tickers discovered across %d snapshots",
+            len(discovered_tickers),
+            len(membership_log),
         )
+        # Log per-index membership summary for auditing
+        for key, members in membership_log.items():
+            logger.debug("Constituents %s: %d members", key, len(members))
 
         # Phase 2 — Build union universe
         universe = sorted(set(self._tickers) | set(discovered_tickers))

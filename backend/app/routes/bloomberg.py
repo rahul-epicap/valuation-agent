@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -33,38 +33,32 @@ def _get_service() -> BloombergService:
     return _service
 
 
+def _validate_date_str(v: str | None) -> str | None:
+    """Shared date format validator for Bloomberg request models."""
+    if v is not None:
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Invalid date format '{v}', expected YYYY-MM-DD")
+    return v
+
+
 class BloombergFetchRequest(BaseModel):
     name: str | None = None
     start_date: str = "2015-01-01"
     end_date: str | None = None
     periodicity: Literal["DAILY", "WEEKLY", "MONTHLY"] = "DAILY"
 
-    @field_validator("start_date", "end_date")
-    @classmethod
-    def validate_date_format(cls, v: str | None) -> str | None:
-        if v is not None:
-            try:
-                datetime.strptime(v, "%Y-%m-%d")
-            except ValueError:
-                raise ValueError(f"Invalid date format '{v}', expected YYYY-MM-DD")
-        return v
+    _validate_dates = field_validator("start_date", "end_date")(_validate_date_str)
 
 
 class BloombergExpandedFetchRequest(BaseModel):
     name: str | None = None
     start_date: str = "2010-01-01"
     end_date: str | None = None
-    start_year: int = 2010
+    start_year: int = Field(default=2010, ge=2000, le=2030)
 
-    @field_validator("start_date", "end_date")
-    @classmethod
-    def validate_date_format(cls, v: str | None) -> str | None:
-        if v is not None:
-            try:
-                datetime.strptime(v, "%Y-%m-%d")
-            except ValueError:
-                raise ValueError(f"Invalid date format '{v}', expected YYYY-MM-DD")
-        return v
+    _validate_dates = field_validator("start_date", "end_date")(_validate_date_str)
 
 
 class BloombergUpdateRequest(BaseModel):
