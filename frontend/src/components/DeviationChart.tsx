@@ -21,6 +21,8 @@ interface DeviationChartProps {
   ex2021: DeviationPoint[];
   currentDateIndex: number;
   metricType: MetricType;
+  p10?: number;
+  p90?: number;
 }
 
 export default function DeviationChart({
@@ -28,6 +30,8 @@ export default function DeviationChart({
   ex2021,
   currentDateIndex,
   metricType,
+  p10,
+  p90,
 }: DeviationChartProps) {
   const col = COLORS[metricType];
 
@@ -72,6 +76,8 @@ export default function DeviationChart({
           font: { size: 9.5 },
           usePointStyle: true,
           pointStyle: 'circle' as const,
+          filter: (item: { text: string }) =>
+            item.text !== '90th Percentile' && item.text !== '10th Percentile',
         },
       },
       tooltip: {
@@ -110,6 +116,35 @@ export default function DeviationChart({
     },
   };
 
+  const bandDatasets = p10 != null && p90 != null
+    ? [
+        {
+          label: '90th Percentile',
+          data: fullData.map(() => p90),
+          borderColor: 'rgba(136,146,166,.35)',
+          backgroundColor: 'rgba(136,146,166,.07)',
+          borderDash: [3, 3],
+          borderWidth: 1,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: '+1' as const,
+          order: 4,
+        },
+        {
+          label: '10th Percentile',
+          data: fullData.map(() => p10),
+          borderColor: 'rgba(136,146,166,.35)',
+          backgroundColor: 'transparent',
+          borderDash: [3, 3],
+          borderWidth: 1,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: false as const,
+          order: 5,
+        },
+      ]
+    : [];
+
   const chartData = {
     labels,
     datasets: [
@@ -132,6 +167,7 @@ export default function DeviationChart({
         fill: false,
         order: 2,
       },
+      ...bandDatasets,
     ],
   };
 
