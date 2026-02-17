@@ -8,8 +8,12 @@ import {
   computeHistoricalBaseline,
   computeSingleTickerScore,
   computeDeviationTimeSeries,
+  computeSpotScore,
+  computePercentileRank,
   HistoricalBaseline,
   SingleTickerScore,
+  SpotScore,
+  PercentileResult,
 } from '../lib/valueScore';
 import MetricToggle from './MetricToggle';
 import ValueScoreBaseline from './ValueScoreBaseline';
@@ -93,6 +97,27 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
     [data, ticker, metricType, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
   );
 
+  // Spot score: single-period regression at current date
+  const spotScore = useMemo(
+    () =>
+      ticker
+        ? computeSpotScore(
+            data, ticker, metricType, state.di, activeTickers,
+            state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax
+          )
+        : null,
+    [data, ticker, metricType, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
+  );
+
+  // Percentile rank: where current deviation sits in its own history
+  const percentileResult = useMemo(
+    () =>
+      deviationFull.length > 0
+        ? computePercentileRank(deviationFull, state.di)
+        : null,
+    [deviationFull, state.di]
+  );
+
   return (
     <div>
       {/* Header row: ticker search + metric toggle */}
@@ -146,8 +171,8 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
               Historical Regression Analysis
             </h3>
 
-            {/* Side-by-side result cards */}
-            <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            {/* Three-column result cards */}
+            <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
               <ScorePanel
                 title="Full History"
                 subtitle={`${data.dates[0]?.slice(0, 4)}\u2013${data.dates[data.dates.length - 1]?.slice(0, 4)}`}
@@ -162,6 +187,11 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
                 score={scoreEx2021}
                 metricType={metricType}
               />
+              <SpotPanel
+                spotScore={spotScore}
+                metricType={metricType}
+                date={data.dates[state.di] ?? ''}
+              />
             </div>
 
             {/* Deviation chart */}
@@ -171,9 +201,16 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
                 ex2021={deviationEx2021}
                 currentDateIndex={state.di}
                 metricType={metricType}
+                p10={percentileResult?.p10}
+                p90={percentileResult?.p90}
               />
             )}
           </div>
+
+          {/* Historical Percentile Context */}
+          {percentileResult && (
+            <PercentilePanel result={percentileResult} metricType={metricType} />
+          )}
 
           {/* How to Read */}
           <div
@@ -188,13 +225,17 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
             </h3>
             <p className="text-xs leading-relaxed" style={{ color: 'var(--t3)' }}>
               The analysis compares this ticker&apos;s current {METRIC_LABELS[metricType]} multiple
-              to what a historical average regression line would predict given its growth rate.{' '}
+              to what regression predicts given its growth rate.{' '}
               <strong style={{ color: 'var(--green)' }}>Negative %</strong> = trading below the
-              historical norm (potentially undervalued).{' '}
+              predicted value (potentially undervalued).{' '}
               <strong style={{ color: 'var(--red)' }}>Positive %</strong> = trading above
-              (potentially overvalued). The &ldquo;Excluding 2021&rdquo; panel removes
-              pandemic-era distortion from the baseline regression. The deviation chart shows
-              how this relationship has evolved over every month in the dataset.
+              (potentially overvalued).{' '}
+              <strong>Full History</strong> and <strong>Ex-2021</strong> use the average
+              regression line across all periods.{' '}
+              <strong>Spot</strong> uses only today&apos;s cross-sectional regression.{' '}
+              The <strong>percentile</strong> shows where today&apos;s deviation sits in the
+              ticker&apos;s own history (low = unusually cheap for this stock; high = unusually
+              expensive).
             </p>
           </div>
         </>
@@ -314,6 +355,243 @@ function DeviationBadge({ pctDiff }: { pctDiff: number }) {
       >
         {pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(1)}%
       </span>
+    </div>
+  );
+}
+
+function SpotPanel({
+  spotScore,
+  metricType,
+  date,
+}: {
+  spotScore: SpotScore | null;
+  metricType: MetricType;
+  date: string;
+}) {
+  const col = COLORS[metricType];
+
+  return (
+    <div
+      className="rounded-lg p-4"
+      style={{ background: 'var(--bg0)', border: '1px solid var(--brd)' }}
+    >
+      <div className="mb-3">
+        <h4 className="text-sm font-bold" style={{ color: 'var(--t1)' }}>
+          Spot (Today)
+        </h4>
+        <p className="text-xs" style={{ color: 'var(--t3)' }}>
+          Cross-section at {date.slice(0, 7)}
+        </p>
+      </div>
+
+      {spotScore ? (
+        <div className="mb-3">
+          <div
+            className="grid gap-2 mb-2"
+            style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
+          >
+            <StatCell label="Actual" value={`${spotScore.actual.toFixed(1)}x`} color={col.m} />
+            <StatCell label="Predicted" value={`${spotScore.predicted.toFixed(1)}x`} color="var(--t2)" />
+            <DeviationBadge pctDiff={spotScore.pctDiff} />
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs py-4 text-center mb-3" style={{ color: 'var(--t3)' }}>
+          No data for this ticker / date / metric
+        </p>
+      )}
+
+      {/* Spot regression stats */}
+      <div
+        className="rounded p-2"
+        style={{ background: 'var(--bg2)' }}
+      >
+        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          <MiniStat label="Slope" value={spotScore ? spotScore.slope.toFixed(2) : '—'} />
+          <MiniStat label="Intercept" value={spotScore ? spotScore.intercept.toFixed(1) : '—'} />
+          <MiniStat label="R²" value={spotScore ? spotScore.r2.toFixed(2) : '—'} />
+          <MiniStat label="N" value={spotScore ? String(spotScore.n) : '—'} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-center">
+      <label
+        className="block"
+        style={{
+          fontSize: '7.5px',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          color: 'var(--t3)',
+        }}
+      >
+        {label}
+      </label>
+      <span
+        className="font-bold"
+        style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '12px',
+          color: 'var(--t2)',
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function PercentilePanel({
+  result,
+  metricType,
+}: {
+  result: PercentileResult;
+  metricType: MetricType;
+}) {
+  const col = COLORS[metricType];
+  const isUnder = result.currentDeviation < 0;
+  const devColor = isUnder ? 'var(--green)' : 'var(--red)';
+
+  // Color the percentile: low = green (cheap for this stock), high = red (expensive)
+  const pctColor = result.percentile <= 30
+    ? 'var(--green)'
+    : result.percentile >= 70
+      ? 'var(--red)'
+      : col.m;
+
+  return (
+    <div
+      className="rounded-xl p-4 mb-4"
+      style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}
+    >
+      <h3
+        className="text-sm font-bold mb-3"
+        style={{ color: 'var(--t1)' }}
+      >
+        Historical Percentile Context
+      </h3>
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        <div className="rounded-lg p-3 text-center" style={{ background: 'var(--bg0)' }}>
+          <label
+            className="block mb-1"
+            style={{
+              fontSize: '8.5px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.7px',
+              color: 'var(--t3)',
+            }}
+          >
+            Current Deviation
+          </label>
+          <span
+            className="font-bold"
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '18px',
+              color: devColor,
+            }}
+          >
+            {result.currentDeviation > 0 ? '+' : ''}{result.currentDeviation.toFixed(1)}%
+          </span>
+        </div>
+
+        <div className="rounded-lg p-3 text-center" style={{ background: 'var(--bg0)' }}>
+          <label
+            className="block mb-1"
+            style={{
+              fontSize: '8.5px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.7px',
+              color: 'var(--t3)',
+            }}
+          >
+            Percentile
+          </label>
+          <span
+            className="font-bold"
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '18px',
+              color: pctColor,
+            }}
+          >
+            {result.percentile.toFixed(0)}th
+          </span>
+          <p className="text-xs mt-1" style={{ color: 'var(--t3)' }}>
+            of {result.sampleCount} periods
+          </p>
+        </div>
+
+        <div className="rounded-lg p-3 text-center" style={{ background: 'var(--bg0)' }}>
+          <label
+            className="block mb-1"
+            style={{
+              fontSize: '8.5px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.7px',
+              color: 'var(--t3)',
+            }}
+          >
+            Historical Range
+          </label>
+          <span
+            className="font-bold"
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '13px',
+              color: 'var(--t2)',
+            }}
+          >
+            {result.p10 > 0 ? '+' : ''}{result.p10.toFixed(1)}%
+          </span>
+          <span className="text-xs mx-1" style={{ color: 'var(--t3)' }}>to</span>
+          <span
+            className="font-bold"
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '13px',
+              color: 'var(--t2)',
+            }}
+          >
+            {result.p90 > 0 ? '+' : ''}{result.p90.toFixed(1)}%
+          </span>
+          <p className="text-xs mt-1" style={{ color: 'var(--t3)' }}>10th – 90th pctl</p>
+        </div>
+
+        <div className="rounded-lg p-3 text-center" style={{ background: 'var(--bg0)' }}>
+          <label
+            className="block mb-1"
+            style={{
+              fontSize: '8.5px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.7px',
+              color: 'var(--t3)',
+            }}
+          >
+            Median
+          </label>
+          <span
+            className="font-bold"
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '18px',
+              color: 'var(--t2)',
+            }}
+          >
+            {result.median > 0 ? '+' : ''}{result.median.toFixed(1)}%
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

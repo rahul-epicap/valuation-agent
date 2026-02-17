@@ -22,7 +22,7 @@ export function okEps(
   const fe = d.fe[dateIndex];
   const xg = d.xg[dateIndex];
   if (fe == null || fe <= 0.5) return false;
-  if (xg == null || xg <= 0.02) return false;
+  if (xg == null || xg <= -0.75 || xg > 2.0) return false;
   return true;
 }
 

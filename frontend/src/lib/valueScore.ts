@@ -1,5 +1,5 @@
 import { DashboardData, MetricType, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
-import { filterPoints, okEps } from './filters';
+import { filterPoints, okEps, percentile } from './filters';
 import { linearRegression } from './regression';
 
 export interface HistoricalBaseline {
@@ -220,5 +220,108 @@ export function computeDeviationTimeSeries(
   }
 
   return result;
+}
+
+export interface SpotScore {
+  growth: number;
+  actual: number;
+  predicted: number;
+  pctDiff: number;
+  slope: number;
+  intercept: number;
+  r2: number;
+  n: number;
+}
+
+export function computeSpotScore(
+  data: DashboardData,
+  ticker: string,
+  type: MetricType,
+  dateIndex: number,
+  activeTickers: string[],
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null
+): SpotScore | null {
+  const mk = MULTIPLE_KEYS[type];
+  const gk = GROWTH_KEYS[type];
+  const d = data.fm[ticker];
+  if (!d) return null;
+
+  const m = d[mk][dateIndex];
+  const g = d[gk][dateIndex];
+  if (m == null || g == null) return null;
+
+  // Apply outlier caps
+  if (type === 'pEPS') {
+    if (!okEps(data, ticker, dateIndex)) return null;
+    if (m > 200) return null;
+  }
+  if (type === 'evRev' && m > 80) return null;
+  if (type === 'evGP' && m > 120) return null;
+
+  const pts = filterPoints(
+    data, type, dateIndex, activeTickers,
+    revGrMin, revGrMax, epsGrMin, epsGrMax
+  );
+  const reg = linearRegression(pts.map((p) => [p.x, p.y]));
+  if (!reg) return null;
+
+  const gPct = g * 100;
+  const predicted = reg.slope * gPct + reg.intercept;
+  if (predicted <= 0) return null;
+
+  const pctDiff = ((m - predicted) / predicted) * 100;
+
+  return {
+    growth: gPct,
+    actual: m,
+    predicted,
+    pctDiff,
+    slope: reg.slope,
+    intercept: reg.intercept,
+    r2: reg.r2,
+    n: reg.n,
+  };
+}
+
+export interface PercentileResult {
+  currentDeviation: number;
+  percentile: number;
+  median: number;
+  p10: number;
+  p90: number;
+  sampleCount: number;
+}
+
+export function computePercentileRank(
+  deviationSeries: DeviationPoint[],
+  currentDateIndex: number
+): PercentileResult | null {
+  const currentPoint = deviationSeries[currentDateIndex];
+  if (!currentPoint || currentPoint.pctDiff == null) return null;
+
+  const values = deviationSeries
+    .map((p) => p.pctDiff)
+    .filter((v): v is number => v != null);
+
+  if (values.length < 3) return null;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const currentDev = currentPoint.pctDiff;
+
+  // Percentile rank: fraction of values <= current
+  const belowOrEqual = sorted.filter((v) => v <= currentDev).length;
+  const pctRank = (belowOrEqual / sorted.length) * 100;
+
+  return {
+    currentDeviation: currentDev,
+    percentile: pctRank,
+    median: percentile(sorted, 0.5),
+    p10: percentile(sorted, 0.1),
+    p90: percentile(sorted, 0.9),
+    sampleCount: sorted.length,
+  };
 }
 
