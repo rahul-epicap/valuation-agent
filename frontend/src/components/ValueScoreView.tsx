@@ -5,7 +5,7 @@ import { DashboardData, MetricType, METRIC_LABELS, COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers } from '../lib/filters';
 import {
-  computeHistoricalBaseline,
+  computeHistoricalBaselineWeighted,
   computeSingleTickerScore,
   computeDeviationTimeSeries,
   computeSpotScore,
@@ -20,6 +20,7 @@ import ValueScoreBaseline from './ValueScoreBaseline';
 import TickerSearchSelect from './TickerSearchSelect';
 import CompanyHeader from './CompanyHeader';
 import DeviationChart from './DeviationChart';
+import RegressionComparison from './RegressionComparison';
 
 interface ValueScoreViewProps {
   data: DashboardData;
@@ -39,7 +40,7 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
   // Expensive: historical baselines (recompute only when data/metric/filters change)
   const baselineFull = useMemo(
     () =>
-      computeHistoricalBaseline(
+      computeHistoricalBaselineWeighted(
         data, metricType, activeTickers,
         state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax
       ),
@@ -48,7 +49,7 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
 
   const baselineEx2021 = useMemo(
     () =>
-      computeHistoricalBaseline(
+      computeHistoricalBaselineWeighted(
         data, metricType, activeTickers,
         state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax,
         2021
@@ -206,6 +207,21 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
               />
             )}
           </div>
+
+          {/* Regression Method Comparison */}
+          <RegressionComparison
+            data={data}
+            metricType={metricType}
+            dateIndex={state.di}
+            activeTickers={activeTickers}
+            ticker={ticker}
+            tickerGrowth={spotScore?.growth ?? null}
+            tickerActual={spotScore?.actual ?? null}
+            revGrMin={state.revGrMin}
+            revGrMax={state.revGrMax}
+            epsGrMin={state.epsGrMin}
+            epsGrMax={state.epsGrMax}
+          />
 
           {/* Historical Percentile Context */}
           {percentileResult && (

@@ -23,6 +23,33 @@ export interface RegressionResult {
   n: number;
 }
 
+export type RegressionMethodName = 'ols' | 'trimmed' | 'robust' | 'logLinear';
+
+export interface ComparisonResult {
+  method: RegressionMethodName;
+  label: string;
+  r2: number;
+  n: number;
+  nOriginal: number;
+  slope: number;
+  intercept: number;
+  predict: (x: number) => number;
+}
+
+export interface AggregateMethodResult {
+  method: RegressionMethodName;
+  label: string;
+  avgR2: number;
+  medianR2: number;
+  avgN: number;
+  avgNOriginal: number;
+  avgSlope: number;
+  avgIntercept: number;
+  periodCount: number;
+  /** How many periods this method had the highest R² */
+  winCount: number;
+}
+
 export interface ScatterPoint {
   x: number;
   y: number;

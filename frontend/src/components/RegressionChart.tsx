@@ -13,7 +13,7 @@ import {
 import { DashboardData, COLORS, METRIC_TITLES, Y_LABELS, X_LABELS, HIGHLIGHT_COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterPoints } from '../lib/filters';
-import { linearRegression } from '../lib/regression';
+import { linearRegressionTrimmed } from '../lib/regression';
 import MetricToggle from './MetricToggle';
 import RegressionStats from './RegressionStats';
 
@@ -40,7 +40,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
   );
 
   const regression = useMemo(
-    () => linearRegression(pts.map((p) => [p.x, p.y] as [number, number])),
+    () => linearRegressionTrimmed(pts.map((p) => [p.x, p.y] as [number, number])),
     [pts]
   );
 

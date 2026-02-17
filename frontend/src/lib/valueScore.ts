@@ -1,6 +1,9 @@
-import { DashboardData, MetricType, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
+import {
+  DashboardData, MetricType, ComparisonResult, AggregateMethodResult,
+  RegressionMethodName, MULTIPLE_KEYS, GROWTH_KEYS,
+} from './types';
 import { filterPoints, okEps, percentile } from './filters';
-import { linearRegression } from './regression';
+import { linearRegressionTrimmed, compareRegressionMethods } from './regression';
 
 export interface HistoricalBaseline {
   avgSlope: number;
@@ -45,7 +48,7 @@ export function computeHistoricalBaseline(
       data, type, di, activeTickers,
       revGrMin, revGrMax, epsGrMin, epsGrMax
     );
-    const reg = linearRegression(pts.map((p) => [p.x, p.y]));
+    const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
     if (!reg) continue;
 
     totalSlope += reg.slope;
@@ -125,7 +128,13 @@ export function computeSingleTickerScore(
   const g = d[gk][dateIndex];
   if (m == null || g == null) return null;
 
-  // Apply same outlier caps as filterPoints
+  // Exclude negative earnings for all metrics
+  const fe = d.fe[dateIndex];
+  if (fe == null || fe <= 0) return null;
+  // Growth range caps + multiple caps
+  if (type === 'evRev' || type === 'evGP') {
+    if (g < 0 || g > 0.50) return null;
+  }
   if (type === 'pEPS') {
     if (!okEps(data, ticker, dateIndex)) return null;
     if (m > 200) return null;
@@ -175,7 +184,7 @@ export function computeDeviationTimeSeries(
       data, type, di, activeTickers,
       revGrMin, revGrMax, epsGrMin, epsGrMax
     );
-    const reg = linearRegression(pts.map((p) => [p.x, p.y]));
+    const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
     if (!reg) {
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
@@ -194,7 +203,17 @@ export function computeDeviationTimeSeries(
       continue;
     }
 
-    // Apply outlier caps
+    // Exclude negative earnings for all metrics
+    const fe = d.fe[di];
+    if (fe == null || fe <= 0) {
+      result.push({ date: data.dates[di], pctDiff: null });
+      continue;
+    }
+    // Growth range caps + multiple caps
+    if ((type === 'evRev' || type === 'evGP') && (g < 0 || g > 0.50)) {
+      result.push({ date: data.dates[di], pctDiff: null });
+      continue;
+    }
     if (type === 'pEPS' && (!okEps(data, ticker, di) || m > 200)) {
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
@@ -253,7 +272,13 @@ export function computeSpotScore(
   const g = d[gk][dateIndex];
   if (m == null || g == null) return null;
 
-  // Apply outlier caps
+  // Exclude negative earnings for all metrics
+  const fe = d.fe[dateIndex];
+  if (fe == null || fe <= 0) return null;
+  // Growth range caps + multiple caps
+  if (type === 'evRev' || type === 'evGP') {
+    if (g < 0 || g > 0.50) return null;
+  }
   if (type === 'pEPS') {
     if (!okEps(data, ticker, dateIndex)) return null;
     if (m > 200) return null;
@@ -265,7 +290,7 @@ export function computeSpotScore(
     data, type, dateIndex, activeTickers,
     revGrMin, revGrMax, epsGrMin, epsGrMax
   );
-  const reg = linearRegression(pts.map((p) => [p.x, p.y]));
+  const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
   if (!reg) return null;
 
   const gPct = g * 100;
@@ -323,5 +348,149 @@ export function computePercentileRank(
     p90: percentile(sorted, 0.9),
     sampleCount: sorted.length,
   };
+}
+
+/**
+ * Approach 4: R²-Weighted Historical Baseline.
+ * Weights each period's slope/intercept by its regression R².
+ */
+export function computeHistoricalBaselineWeighted(
+  data: DashboardData,
+  type: MetricType,
+  activeTickers: string[],
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null,
+  excludeYear?: number
+): HistoricalBaseline | null {
+  const periods: { slope: number; intercept: number; r2: number; n: number }[] = [];
+
+  for (let di = 0; di < data.dates.length; di++) {
+    if (excludeYear != null) {
+      const year = parseInt(data.dates[di].slice(0, 4), 10);
+      if (year === excludeYear) continue;
+    }
+
+    const pts = filterPoints(
+      data, type, di, activeTickers,
+      revGrMin, revGrMax, epsGrMin, epsGrMax
+    );
+    const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
+    if (!reg || reg.r2 <= 0) continue;
+
+    periods.push(reg);
+  }
+
+  if (periods.length < 1) return null;
+
+  const totalWeight = periods.reduce((s, p) => s + p.r2, 0);
+  if (totalWeight <= 0) return null;
+
+  const avgSlope = periods.reduce((s, p) => s + p.slope * p.r2, 0) / totalWeight;
+  const avgIntercept = periods.reduce((s, p) => s + p.intercept * p.r2, 0) / totalWeight;
+  const avgR2 = periods.reduce((s, p) => s + p.r2, 0) / periods.length;
+  const avgN = periods.reduce((s, p) => s + p.n, 0) / periods.length;
+
+  return {
+    avgSlope,
+    avgIntercept,
+    periodCount: periods.length,
+    avgR2,
+    avgN,
+  };
+}
+
+/**
+ * Run all four regression methods on the current scatter data for comparison.
+ */
+export function computeMethodComparison(
+  data: DashboardData,
+  type: MetricType,
+  dateIndex: number,
+  activeTickers: string[],
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null
+): ComparisonResult[] {
+  const pts = filterPoints(
+    data, type, dateIndex, activeTickers,
+    revGrMin, revGrMax, epsGrMin, epsGrMax
+  );
+  return compareRegressionMethods(pts.map((p) => [p.x, p.y]));
+}
+
+/**
+ * Run all four regression methods across ALL dates and aggregate R², N, etc.
+ */
+export function computeAggregateComparison(
+  data: DashboardData,
+  type: MetricType,
+  activeTickers: string[],
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null
+): AggregateMethodResult[] {
+  const methods: RegressionMethodName[] = ['ols', 'trimmed', 'robust', 'logLinear'];
+  const labels: Record<RegressionMethodName, string> = {
+    ols: 'OLS (Current)',
+    trimmed: 'Residual Trimming',
+    robust: 'Robust (Huber)',
+    logLinear: 'Log-Linear',
+  };
+
+  // Collect per-period results for each method
+  const buckets: Record<RegressionMethodName, ComparisonResult[]> = {
+    ols: [], trimmed: [], robust: [], logLinear: [],
+  };
+  const winCounts: Record<RegressionMethodName, number> = {
+    ols: 0, trimmed: 0, robust: 0, logLinear: 0,
+  };
+
+  for (let di = 0; di < data.dates.length; di++) {
+    const pts = filterPoints(
+      data, type, di, activeTickers,
+      revGrMin, revGrMax, epsGrMin, epsGrMax
+    );
+    const results = compareRegressionMethods(pts.map((p) => [p.x, p.y]));
+    if (results.length === 0) continue;
+
+    let bestR2 = -Infinity;
+    let bestMethod: RegressionMethodName = 'ols';
+    for (const r of results) {
+      buckets[r.method].push(r);
+      if (r.r2 > bestR2) {
+        bestR2 = r.r2;
+        bestMethod = r.method;
+      }
+    }
+    winCounts[bestMethod]++;
+  }
+
+  return methods.map((m) => {
+    const b = buckets[m];
+    if (b.length === 0) {
+      return {
+        method: m, label: labels[m],
+        avgR2: 0, medianR2: 0, avgN: 0, avgNOriginal: 0,
+        avgSlope: 0, avgIntercept: 0, periodCount: 0, winCount: 0,
+      };
+    }
+    const r2s = b.map((r) => r.r2).sort((a, c) => a - c);
+    return {
+      method: m,
+      label: labels[m],
+      avgR2: b.reduce((s, r) => s + r.r2, 0) / b.length,
+      medianR2: percentile(r2s, 0.5),
+      avgN: b.reduce((s, r) => s + r.n, 0) / b.length,
+      avgNOriginal: b.reduce((s, r) => s + r.nOriginal, 0) / b.length,
+      avgSlope: b.reduce((s, r) => s + r.slope, 0) / b.length,
+      avgIntercept: b.reduce((s, r) => s + r.intercept, 0) / b.length,
+      periodCount: b.length,
+      winCount: winCounts[m],
+    };
+  });
 }
 
