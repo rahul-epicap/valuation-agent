@@ -13,6 +13,7 @@ import InterceptChart from '../components/InterceptChart';
 import ChartContainer from '../components/ChartContainer';
 import UploadModal from '../components/UploadModal';
 import ValueScoreView from '../components/ValueScoreView';
+import DcfView from '../components/DcfView';
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -165,8 +166,10 @@ function DashboardContent({
           allIndustries={allIndustries}
         />
         <main className="overflow-y-auto" style={{ padding: '16px 20px' }}>
-          {state.view === 'valueScore' ? (
+          {state.view === 'regression' ? (
             <ValueScoreView data={data} state={state} dispatch={dispatch} />
+          ) : state.view === 'dcf' ? (
+            <DcfView data={data} state={state} dispatch={dispatch} />
           ) : (
             <>
               <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>

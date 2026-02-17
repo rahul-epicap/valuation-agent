@@ -104,7 +104,8 @@ export default function Header({
 
 const VIEW_OPTIONS: { key: ViewMode; label: string }[] = [
   { key: 'charts', label: 'Charts' },
-  { key: 'valueScore', label: 'Value Score' },
+  { key: 'regression', label: 'Regression' },
+  { key: 'dcf', label: 'DCF' },
 ];
 
 function ViewToggle({ active, onChange }: { active: ViewMode; onChange: (v: ViewMode) => void }) {
