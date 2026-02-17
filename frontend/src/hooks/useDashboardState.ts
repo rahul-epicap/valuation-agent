@@ -3,7 +3,7 @@
 import { useReducer, useMemo } from 'react';
 import { DashboardData, MetricType } from '../lib/types';
 
-export type ViewMode = 'charts' | 'valueScore';
+export type ViewMode = 'charts' | 'regression' | 'dcf';
 
 export interface DashboardState {
   view: ViewMode;
@@ -22,6 +22,10 @@ export interface DashboardState {
   revGrMax: number | null;
   epsGrMin: number | null;
   epsGrMax: number | null;
+  dcfDiscountRate: number;
+  dcfTerminalGrowth: number;
+  dcfProjectionYears: number;
+  dcfFadePeriod: number;
 }
 
 type Action =
@@ -45,7 +49,11 @@ type Action =
   | { type: 'SET_REV_GROWTH_MIN'; payload: number | null }
   | { type: 'SET_REV_GROWTH_MAX'; payload: number | null }
   | { type: 'SET_EPS_GROWTH_MIN'; payload: number | null }
-  | { type: 'SET_EPS_GROWTH_MAX'; payload: number | null };
+  | { type: 'SET_EPS_GROWTH_MAX'; payload: number | null }
+  | { type: 'SET_DCF_DISCOUNT_RATE'; payload: number }
+  | { type: 'SET_DCF_TERMINAL_GROWTH'; payload: number }
+  | { type: 'SET_DCF_PROJECTION_YEARS'; payload: number }
+  | { type: 'SET_DCF_FADE_PERIOD'; payload: number };
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -115,6 +123,14 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, epsGrMin: action.payload };
     case 'SET_EPS_GROWTH_MAX':
       return { ...state, epsGrMax: action.payload };
+    case 'SET_DCF_DISCOUNT_RATE':
+      return { ...state, dcfDiscountRate: action.payload };
+    case 'SET_DCF_TERMINAL_GROWTH':
+      return { ...state, dcfTerminalGrowth: action.payload };
+    case 'SET_DCF_PROJECTION_YEARS':
+      return { ...state, dcfProjectionYears: action.payload };
+    case 'SET_DCF_FADE_PERIOD':
+      return { ...state, dcfFadePeriod: action.payload };
     default:
       return state;
   }
@@ -139,6 +155,10 @@ export function createInitialState(data: DashboardData): DashboardState {
     revGrMax: null,
     epsGrMin: null,
     epsGrMax: null,
+    dcfDiscountRate: 0.10,
+    dcfTerminalGrowth: 0.03,
+    dcfProjectionYears: 10,
+    dcfFadePeriod: 5,
   };
 }
 

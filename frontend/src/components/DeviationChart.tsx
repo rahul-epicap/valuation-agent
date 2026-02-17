@@ -85,23 +85,25 @@ export default function DeviationChart({
         borderColor: '#253252',
         borderWidth: 1,
         cornerRadius: 5,
-        titleFont: { family: "'JetBrains Mono', monospace", size: 11, weight: '600' as const },
+        titleFont: { family: "'JetBrains Mono', monospace", size: 11, weight: 'bold' as const },
         bodyFont: { size: 10.5 },
         padding: 8,
         callbacks: {
-          label: (item: { parsed: { y: number }; dataset: { label: string } }) =>
-            `${item.dataset.label}: ${item.parsed.y >= 0 ? '+' : ''}${item.parsed.y.toFixed(1)}%`,
+          label: (item: { parsed: { y: number | null }; dataset: { label?: string } }) => {
+            const y = item.parsed.y ?? 0;
+            return `${item.dataset.label ?? ''}: ${y >= 0 ? '+' : ''}${y.toFixed(1)}%`;
+          },
         },
       },
     },
     scales: {
       x: {
-        title: { display: true, text: 'Date', font: { weight: '600' as const } },
+        title: { display: true, text: 'Date', font: { weight: 'bold' as const } },
         grid: { color: 'rgba(28,40,66,.25)' },
         ticks: { maxTicksLimit: 14, font: { size: 9.5 } },
       },
       y: {
-        title: { display: true, text: 'Deviation from Predicted (%)', font: { weight: '600' as const } },
+        title: { display: true, text: 'Deviation from Predicted (%)', font: { weight: 'bold' as const } },
         grid: {
           color: (ctx: { tick: { value: number } }) =>
             ctx.tick.value === 0 ? 'rgba(136,146,166,.5)' : 'rgba(28,40,66,.25)',
