@@ -184,6 +184,24 @@ class BloombergService:
             raise RuntimeError("Bloomberg session not started")
         return self._bquery.bdp(securities, fields)
 
+    def _bds_sync(
+        self,
+        security: str,
+        field: str,
+        overrides: list[tuple[str, str]] | None = None,
+    ) -> pd.DataFrame:
+        """Run a BDS (Bloomberg Data Set) query synchronously.
+
+        Used for bulk reference data like index constituents.
+        """
+        if self._bquery is None:
+            raise RuntimeError("Bloomberg session not started")
+        return self._bquery.bds(
+            security=security,
+            field=field,
+            overrides=overrides or [],
+        )
+
     @staticmethod
     def _batches(items: list[str], size: int) -> list[list[str]]:
         """Split a list into batches of the given size."""
@@ -274,6 +292,54 @@ class BloombergService:
 
         return result
 
+    async def _retry_failed_batch(
+        self,
+        batch: list[str],
+        field: str,
+        start_date: str,
+        end_date: str,
+        overrides: list[tuple[str, str]] | None = None,
+        fill_prev: bool = False,
+        periodicity: str = "MONTHLY",
+    ) -> dict[str, dict[str, float | None]]:
+        """Retry a failed BDH batch by querying each ticker individually.
+
+        When a batch fails (often because one delisted ticker causes a security
+        error), this salvages data for the other tickers in the batch.
+        """
+        result: dict[str, dict[str, float | None]] = {}
+
+        for ticker in batch:
+            try:
+                df = await asyncio.to_thread(
+                    self._bdh_sync,
+                    [ticker],
+                    field,
+                    start_date,
+                    end_date,
+                    overrides,
+                    fill_prev,
+                    periodicity,
+                )
+            except Exception:
+                logger.debug(
+                    "Individual retry failed for %s field=%s (likely delisted)",
+                    ticker,
+                    field,
+                )
+                result.setdefault(ticker, {})
+                continue
+
+            if df.empty:
+                result.setdefault(ticker, {})
+                continue
+
+            parsed = self._parse_bdh_dataframe(df, field)
+            for t, date_vals in parsed.items():
+                result.setdefault(t, {}).update(date_vals)
+
+        return result
+
     async def _fetch_bdh_metric(
         self,
         field: str,
@@ -282,11 +348,13 @@ class BloombergService:
         overrides: list[tuple[str, str]] | None = None,
         fill_prev: bool = False,
         periodicity: str = "MONTHLY",
+        tickers: list[str] | None = None,
     ) -> dict[str, dict[str, float | None]]:
         """Fetch one BDH field for all tickers, batched."""
+        ticker_universe = tickers or self._tickers
         result: dict[str, dict[str, float | None]] = {}
 
-        for batch in self._batches(self._tickers, _BATCH_SIZE):
+        for batch in self._batches(ticker_universe, _BATCH_SIZE):
             try:
                 df = await asyncio.to_thread(
                     self._bdh_sync,
@@ -299,13 +367,22 @@ class BloombergService:
                     periodicity,
                 )
             except Exception:
-                logger.exception(
-                    "BDH query failed for field=%s, batch starting with %s",
+                logger.warning(
+                    "BDH batch failed for field=%s, batch starting with %s — retrying individually",
                     field,
-                    batch[0],
+                    batch[0] if batch else "(empty)",
                 )
-                for t in batch:
-                    result.setdefault(t, {})
+                retried = await self._retry_failed_batch(
+                    batch,
+                    field,
+                    start_date,
+                    end_date,
+                    overrides,
+                    fill_prev,
+                    periodicity,
+                )
+                for t, date_vals in retried.items():
+                    result.setdefault(t, {}).update(date_vals)
                 continue
 
             if df.empty:
@@ -324,6 +401,7 @@ class BloombergService:
         field: str,
         start_date: str,
         end_date: str,
+        tickers: list[str] | None = None,
     ) -> dict[str, dict[str, float | None]]:
         """
         Fetch one BDH field with YEARLY periodicity for all tickers, batched.
@@ -331,21 +409,44 @@ class BloombergService:
         Returns sparse {ticker: {date_str: value}} with one entry per fiscal year.
         Use _forward_fill_yearly_to_monthly() to expand to the monthly date grid.
         """
+        ticker_universe = tickers or self._tickers
         result: dict[str, dict[str, float | None]] = {}
 
-        for batch in self._batches(self._tickers, _BATCH_SIZE):
+        for batch in self._batches(ticker_universe, _BATCH_SIZE):
             try:
                 df = await asyncio.to_thread(
                     self._bdh_yearly_sync, batch, field, start_date, end_date
                 )
             except Exception:
-                logger.exception(
-                    "BDH YEARLY query failed for field=%s, batch starting with %s",
+                logger.warning(
+                    "BDH YEARLY batch failed for field=%s, batch starting with %s — retrying individually",
                     field,
-                    batch[0],
+                    batch[0] if batch else "(empty)",
                 )
-                for t in batch:
-                    result.setdefault(t, {})
+                # Retry each ticker individually to salvage data around delisted tickers
+                for ticker in batch:
+                    try:
+                        df = await asyncio.to_thread(
+                            self._bdh_yearly_sync,
+                            [ticker],
+                            field,
+                            start_date,
+                            end_date,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Individual yearly retry failed for %s field=%s (likely delisted)",
+                            ticker,
+                            field,
+                        )
+                        result.setdefault(ticker, {})
+                        continue
+                    if df.empty:
+                        result.setdefault(ticker, {})
+                        continue
+                    parsed = self._parse_bdh_dataframe(df, field)
+                    for t, date_vals in parsed.items():
+                        result.setdefault(t, {}).update(date_vals)
                 continue
 
             if df.empty:
@@ -396,11 +497,14 @@ class BloombergService:
 
         return arrays
 
-    async def _fetch_industries(self) -> dict[str, str]:
+    async def _fetch_industries(
+        self, tickers: list[str] | None = None
+    ) -> dict[str, str]:
         """Fetch INDUSTRY_SECTOR for all tickers via BDP."""
+        ticker_universe = tickers or self._tickers
         industries: dict[str, str] = {}
 
-        for batch in self._batches(self._tickers, _BATCH_SIZE):
+        for batch in self._batches(ticker_universe, _BATCH_SIZE):
             try:
                 df = await asyncio.to_thread(self._bdp_sync, batch, ["INDUSTRY_SECTOR"])
             except Exception:
@@ -448,97 +552,26 @@ class BloombergService:
         return industries
 
     # ------------------------------------------------------------------
-    # Public API
+    # Assembly
     # ------------------------------------------------------------------
 
-    async def fetch_all(
+    def _assemble_dashboard_json(
         self,
-        start_date: str = "2015-01-01",
-        end_date: str | None = None,
-        periodicity: str = "DAILY",
+        ev_data: dict[str, dict[str, float | None]],
+        fwd_rev_data: dict[str, dict[str, float | None]],
+        nxt_rev_data: dict[str, dict[str, float | None]],
+        gross_margin_data: dict[str, dict[str, float | None]],
+        fwd_eps_data: dict[str, dict[str, float | None]],
+        trail_eps_yearly_data: dict[str, dict[str, float | None]],
+        pe_data: dict[str, dict[str, float | None]],
+        industries: dict[str, str],
+        ticker_universe: list[str],
     ) -> dict:
+        """Assemble raw BDH data dicts into the final dashboard JSON.
+
+        Shared by fetch_all() and fetch_expanded(). The ticker_universe list
+        should contain Bloomberg-format tickers ('XXXX US Equity').
         """
-        Fetch all metrics from Bloomberg and assemble the dashboard JSON.
-
-        Args:
-            periodicity: BDH periodicity — "DAILY", "MONTHLY", or "WEEKLY".
-
-        Returns a dict with the same schema as excel_parser.parse_excel():
-        {
-            "dates": [...],
-            "tickers": [...],
-            "industries": {...},
-            "fm": { ticker: { er, eg, pe, rg, xg, fe: [...] } }
-        }
-        """
-        if end_date is None:
-            end_date = date.today().strftime("%Y-%m-%d")
-
-        logger.info(
-            "Starting Bloomberg fetch: %d tickers, %s to %s",
-            len(self._tickers),
-            start_date,
-            end_date,
-        )
-
-        # Fetch all BDH metrics concurrently
-        # Gross profit is derived: BEST_GROSS_MARGIN (%) * BEST_SALES (1BF) / 100
-        # Revenue growth: BEST_SALES(2BF) / BEST_SALES(1BF) - 1
-        # EPS growth: BEST_EPS(1BF) / IS_COMP_EPS_EXCL_STOCK_COMP (annual) - 1
-        (
-            ev_data,
-            fwd_rev_data,
-            nxt_rev_data,
-            gross_margin_data,
-            fwd_eps_data,
-            trail_eps_yearly_data,
-            pe_data,
-            industries,
-        ) = await asyncio.gather(
-            self._fetch_bdh_metric(
-                "CURR_ENTP_VAL", start_date, end_date, periodicity=periodicity
-            ),
-            self._fetch_bdh_metric(
-                "BEST_SALES",
-                start_date,
-                end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
-                periodicity=periodicity,
-            ),
-            self._fetch_bdh_metric(
-                "BEST_SALES",
-                start_date,
-                end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
-                periodicity=periodicity,
-            ),
-            self._fetch_bdh_metric(
-                "BEST_GROSS_MARGIN",
-                start_date,
-                end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
-                periodicity=periodicity,
-            ),
-            self._fetch_bdh_metric(
-                "BEST_EPS",
-                start_date,
-                end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
-                periodicity=periodicity,
-            ),
-            # Fetch yearly data starting 2 years earlier to ensure we capture the
-            # most recent annual value for forward-filling (fiscal year-ends vary)
-            self._fetch_yearly_bdh_metric(
-                "IS_COMP_EPS_EXCL_STOCK_COMP",
-                self._shift_date_back(start_date, years=2),
-                end_date,
-            ),
-            self._fetch_bdh_metric(
-                "BEST_PE_RATIO", start_date, end_date, periodicity=periodicity
-            ),
-            self._fetch_industries(),
-        )
-
         # Build unified date list from BDH data
         # (exclude yearly trail_eps_yearly_data — those dates are fiscal year-ends
         #  and would add odd dates to the grid)
@@ -559,7 +592,7 @@ class BloombergService:
         logger.info("Unified date range: %d dates", num_dates)
 
         # Build short ticker list
-        short_tickers = sorted({_clean_ticker(t) for t in self._tickers})
+        short_tickers = sorted({_clean_ticker(t) for t in ticker_universe})
 
         # Helper: convert {bbg_ticker: {date: val}} → {short_ticker: [val_per_date]}
         def to_arrays(
@@ -577,7 +610,6 @@ class BloombergService:
         nxt_rev_arrays = to_arrays(nxt_rev_data)
         gm_arrays = to_arrays(gross_margin_data)
         fwd_eps_arrays = to_arrays(fwd_eps_data)
-        # Trailing EPS: yearly data forward-filled to monthly grid
         trail_eps_arrays = self._forward_fill_yearly_to_monthly(
             trail_eps_yearly_data, all_dates
         )
@@ -670,13 +702,246 @@ class BloombergService:
         }
 
         logger.info(
-            "Bloomberg fetch complete: %d dates, %d tickers, %d industries",
+            "Dashboard assembly complete: %d dates, %d tickers, %d industries",
             len(all_dates),
             len(short_tickers),
             len(industries),
         )
 
         return result
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def fetch_all(
+        self,
+        start_date: str = "2015-01-01",
+        end_date: str | None = None,
+        periodicity: str = "DAILY",
+    ) -> dict:
+        """
+        Fetch all metrics from Bloomberg and assemble the dashboard JSON.
+
+        Args:
+            periodicity: BDH periodicity — "DAILY", "MONTHLY", or "WEEKLY".
+
+        Returns a dict with the same schema as excel_parser.parse_excel():
+        {
+            "dates": [...],
+            "tickers": [...],
+            "industries": {...},
+            "fm": { ticker: { er, eg, pe, rg, xg, fe: [...] } }
+        }
+        """
+        if end_date is None:
+            end_date = date.today().strftime("%Y-%m-%d")
+
+        logger.info(
+            "Starting Bloomberg fetch: %d tickers, %s to %s",
+            len(self._tickers),
+            start_date,
+            end_date,
+        )
+
+        # Fetch all BDH metrics concurrently
+        (
+            ev_data,
+            fwd_rev_data,
+            nxt_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_eps_yearly_data,
+            pe_data,
+            industries,
+        ) = await asyncio.gather(
+            self._fetch_bdh_metric(
+                "CURR_ENTP_VAL", start_date, end_date, periodicity=periodicity
+            ),
+            self._fetch_bdh_metric(
+                "BEST_SALES",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity=periodicity,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_SALES",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
+                periodicity=periodicity,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_GROSS_MARGIN",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity=periodicity,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_EPS",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity=periodicity,
+            ),
+            # Fetch yearly data starting 2 years earlier to ensure we capture the
+            # most recent annual value for forward-filling (fiscal year-ends vary)
+            self._fetch_yearly_bdh_metric(
+                "IS_COMP_EPS_EXCL_STOCK_COMP",
+                self._shift_date_back(start_date, years=2),
+                end_date,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_PE_RATIO", start_date, end_date, periodicity=periodicity
+            ),
+            self._fetch_industries(),
+        )
+
+        return self._assemble_dashboard_json(
+            ev_data,
+            fwd_rev_data,
+            nxt_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_eps_yearly_data,
+            pe_data,
+            industries,
+            self._tickers,
+        )
+
+    async def fetch_expanded(
+        self,
+        start_date: str = "2010-01-01",
+        end_date: str | None = None,
+        start_year: int = 2010,
+    ) -> dict:
+        """Fetch expanded universe (SPX + NDX constituents) with weekly data.
+
+        Phase 1: Discover all historical constituents via BDS.
+        Phase 2: Union with existing ticker list.
+        Phase 3: Fetch all BDH fields at WEEKLY periodicity.
+        Phase 4: Assemble dashboard JSON.
+
+        Returns the same schema as fetch_all().
+        """
+        from app.services.index_constituents import fetch_all_constituents
+
+        if end_date is None:
+            end_date = date.today().strftime("%Y-%m-%d")
+
+        # Phase 1 — Constituent discovery
+        logger.info(
+            "Phase 1: Discovering index constituents (start_year=%d)", start_year
+        )
+        discovered_tickers, membership_log = await fetch_all_constituents(
+            self, start_year=start_year
+        )
+        logger.info(
+            "Phase 1 complete: %d unique tickers discovered across %d snapshots",
+            len(discovered_tickers),
+            len(membership_log),
+        )
+        # Log per-index membership summary for auditing
+        for key, members in membership_log.items():
+            logger.debug("Constituents %s: %d members", key, len(members))
+
+        # Phase 2 — Build union universe
+        universe = sorted(set(self._tickers) | set(discovered_tickers))
+        logger.info(
+            "Phase 2: Universe = %d tickers (%d existing + %d discovered, %d overlap)",
+            len(universe),
+            len(self._tickers),
+            len(discovered_tickers),
+            len(self._tickers) + len(discovered_tickers) - len(universe),
+        )
+
+        # Phase 3 — Fetch all BDH fields at WEEKLY periodicity
+        logger.info(
+            "Phase 3: Fetching BDH data for %d tickers, %s to %s (WEEKLY)",
+            len(universe),
+            start_date,
+            end_date,
+        )
+        (
+            ev_data,
+            fwd_rev_data,
+            nxt_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_eps_yearly_data,
+            pe_data,
+            industries,
+        ) = await asyncio.gather(
+            self._fetch_bdh_metric(
+                "CURR_ENTP_VAL",
+                start_date,
+                end_date,
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_SALES",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_SALES",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_GROSS_MARGIN",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_EPS",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_yearly_bdh_metric(
+                "IS_COMP_EPS_EXCL_STOCK_COMP",
+                self._shift_date_back(start_date, years=2),
+                end_date,
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_PE_RATIO",
+                start_date,
+                end_date,
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_industries(tickers=universe),
+        )
+
+        # Phase 4 — Assemble
+        logger.info("Phase 4: Assembling dashboard JSON")
+        return self._assemble_dashboard_json(
+            ev_data,
+            fwd_rev_data,
+            nxt_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_eps_yearly_data,
+            pe_data,
+            industries,
+            universe,
+        )
 
     # ------------------------------------------------------------------
     # Incremental update helpers
