@@ -13,18 +13,18 @@ machine as the backend server.
 
 BDH Field Mapping:
     CURR_ENTP_VAL                    → Enterprise Value
-    BEST_SALES + 1BF override       → Forward (FY1) Revenue consensus
-    BEST_SALES + 2BF override       → Next (FY2) Revenue consensus (for growth)
-    BEST_GROSS_MARGIN + 1BF         → Forward (FY1) Gross Margin % consensus
-    BEST_EPS + 1BF                  → Forward (FY1) EPS consensus  (= fe)
-    IS_COMP_EPS_EXCL_STOCK_COMP     → Annual trailing EPS (via YEARLY BDH, forward-filled)
+    BEST_SALES + BF override        → Forward Revenue consensus    (= fe denominator)
+    BEST_GROSS_MARGIN + BF          → Forward Gross Margin % consensus
+    BEST_EPS + BF                   → Forward EPS consensus        (= fe)
+    TRAIL_12M_NET_SALES             → Trailing 12M actual revenue  (quarterly, forward-filled)
+    TRAIL_12M_EPS                   → Trailing 12M actual EPS      (quarterly, forward-filled)
     BEST_PE_RATIO                   → Forward P/E ratio            (= pe)
 
 Derived in Python:
     er = EV / Forward Revenue
     eg = EV / (BEST_GROSS_MARGIN/100 * Forward Revenue)
-    rg = (FY2 Revenue / FY1 Revenue) - 1
-    xg = (Forward EPS / Trailing EPS) - 1
+    rg = (Forward Revenue / Trailing 12M Revenue) - 1
+    xg = (Forward EPS / Trailing 12M EPS) - 1
 """
 
 from __future__ import annotations
@@ -559,10 +559,10 @@ class BloombergService:
         self,
         ev_data: dict[str, dict[str, float | None]],
         fwd_rev_data: dict[str, dict[str, float | None]],
-        nxt_rev_data: dict[str, dict[str, float | None]],
         gross_margin_data: dict[str, dict[str, float | None]],
         fwd_eps_data: dict[str, dict[str, float | None]],
-        trail_eps_yearly_data: dict[str, dict[str, float | None]],
+        trail_rev_data: dict[str, dict[str, float | None]],
+        trail_eps_data: dict[str, dict[str, float | None]],
         pe_data: dict[str, dict[str, float | None]],
         industries: dict[str, str],
         ticker_universe: list[str],
@@ -572,14 +572,13 @@ class BloombergService:
         Shared by fetch_all() and fetch_expanded(). The ticker_universe list
         should contain Bloomberg-format tickers ('XXXX US Equity').
         """
-        # Build unified date list from BDH data
-        # (exclude yearly trail_eps_yearly_data — those dates are fiscal year-ends
+        # Build unified date list from monthly BDH data
+        # (exclude quarterly trailing data — those dates are fiscal quarter-ends
         #  and would add odd dates to the grid)
         all_dates_set: set[str] = set()
         for data in [
             ev_data,
             fwd_rev_data,
-            nxt_rev_data,
             gross_margin_data,
             fwd_eps_data,
             pe_data,
@@ -607,11 +606,14 @@ class BloombergService:
 
         ev_arrays = to_arrays(ev_data)
         fwd_rev_arrays = to_arrays(fwd_rev_data)
-        nxt_rev_arrays = to_arrays(nxt_rev_data)
         gm_arrays = to_arrays(gross_margin_data)
         fwd_eps_arrays = to_arrays(fwd_eps_data)
+        # Forward-fill quarterly trailing data to the monthly date grid
+        trail_rev_arrays = self._forward_fill_yearly_to_monthly(
+            trail_rev_data, all_dates
+        )
         trail_eps_arrays = self._forward_fill_yearly_to_monthly(
-            trail_eps_yearly_data, all_dates
+            trail_eps_data, all_dates
         )
         pe_arrays = to_arrays(pe_data)
 
@@ -627,9 +629,9 @@ class BloombergService:
         for ticker in short_tickers:
             ev_vals = ev_arrays.get(ticker) or _null_arr()
             fwd_rev_vals = fwd_rev_arrays.get(ticker) or _null_arr()
-            nxt_rev_vals = nxt_rev_arrays.get(ticker) or _null_arr()
             gm_vals = gm_arrays.get(ticker) or _null_arr()
             fwd_eps_vals = fwd_eps_arrays.get(ticker) or _null_arr()
+            trail_rev_vals = trail_rev_arrays.get(ticker) or _null_arr()
             trail_eps_vals = trail_eps_arrays.get(ticker) or _null_arr()
 
             er_vals: list[float | None] = []
@@ -640,9 +642,9 @@ class BloombergService:
             for i in range(num_dates):
                 ev = ev_vals[i] if i < len(ev_vals) else None
                 fwd_rev = fwd_rev_vals[i] if i < len(fwd_rev_vals) else None
-                nxt_rev = nxt_rev_vals[i] if i < len(nxt_rev_vals) else None
                 gm = gm_vals[i] if i < len(gm_vals) else None
                 fwd_eps = fwd_eps_vals[i] if i < len(fwd_eps_vals) else None
+                trail_rev = trail_rev_vals[i] if i < len(trail_rev_vals) else None
                 trail_eps = trail_eps_vals[i] if i < len(trail_eps_vals) else None
 
                 # EV / Forward Revenue
@@ -652,7 +654,7 @@ class BloombergService:
                     er_vals.append(None)
 
                 # EV / Forward Gross Profit
-                # Gross Profit = BEST_GROSS_MARGIN (%) * BEST_SALES (1BF) / 100
+                # Gross Profit = BEST_GROSS_MARGIN (%) * BEST_SALES (BF) / 100
                 if (
                     ev is not None
                     and gm is not None
@@ -665,13 +667,13 @@ class BloombergService:
                 else:
                     eg_vals.append(None)
 
-                # Revenue Growth = BEST_SALES(2BF) / BEST_SALES(1BF) - 1
-                if fwd_rev is not None and nxt_rev is not None and fwd_rev != 0:
-                    rg_vals.append(nxt_rev / fwd_rev - 1.0)
+                # Revenue Growth = BEST_SALES(BF) / TRAIL_12M_NET_SALES - 1
+                if fwd_rev is not None and trail_rev is not None and trail_rev != 0:
+                    rg_vals.append(fwd_rev / trail_rev - 1.0)
                 else:
                     rg_vals.append(None)
 
-                # EPS Growth = BEST_EPS(1BF) / IS_COMP_EPS_EXCL_STOCK_COMP - 1
+                # EPS Growth = BEST_EPS(BF) / TRAIL_12M_EPS - 1
                 if fwd_eps is not None and trail_eps is not None and trail_eps != 0:
                     xg_vals.append(fwd_eps / trail_eps - 1.0)
                 else:
@@ -745,13 +747,18 @@ class BloombergService:
         )
 
         # Fetch all BDH metrics concurrently
+        # Trailing fields (TRAIL_12M_*) return quarterly data — the assembly
+        # step forward-fills them to the monthly/daily date grid.
+        # We start trailing fetches 1 year earlier to ensure we have at least
+        # one quarterly value before the main date range begins.
+        trail_start = self._shift_date_back(start_date, years=1)
         (
             ev_data,
             fwd_rev_data,
-            nxt_rev_data,
             gross_margin_data,
             fwd_eps_data,
-            trail_eps_yearly_data,
+            trail_rev_data,
+            trail_eps_data,
             pe_data,
             industries,
         ) = await asyncio.gather(
@@ -762,37 +769,25 @@ class BloombergService:
                 "BEST_SALES",
                 start_date,
                 end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
-                periodicity=periodicity,
-            ),
-            self._fetch_bdh_metric(
-                "BEST_SALES",
-                start_date,
-                end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
                 periodicity=periodicity,
             ),
             self._fetch_bdh_metric(
                 "BEST_GROSS_MARGIN",
                 start_date,
                 end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
                 periodicity=periodicity,
             ),
             self._fetch_bdh_metric(
                 "BEST_EPS",
                 start_date,
                 end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
                 periodicity=periodicity,
             ),
-            # Fetch yearly data starting 2 years earlier to ensure we capture the
-            # most recent annual value for forward-filling (fiscal year-ends vary)
-            self._fetch_yearly_bdh_metric(
-                "IS_COMP_EPS_EXCL_STOCK_COMP",
-                self._shift_date_back(start_date, years=2),
-                end_date,
-            ),
+            self._fetch_bdh_metric("TRAIL_12M_NET_SALES", trail_start, end_date),
+            self._fetch_bdh_metric("TRAIL_12M_EPS", trail_start, end_date),
             self._fetch_bdh_metric(
                 "BEST_PE_RATIO", start_date, end_date, periodicity=periodicity
             ),
@@ -802,10 +797,10 @@ class BloombergService:
         return self._assemble_dashboard_json(
             ev_data,
             fwd_rev_data,
-            nxt_rev_data,
             gross_margin_data,
             fwd_eps_data,
-            trail_eps_yearly_data,
+            trail_rev_data,
+            trail_eps_data,
             pe_data,
             industries,
             self._tickers,
@@ -864,13 +859,14 @@ class BloombergService:
             start_date,
             end_date,
         )
+        trail_start = self._shift_date_back(start_date, years=1)
         (
             ev_data,
             fwd_rev_data,
-            nxt_rev_data,
             gross_margin_data,
             fwd_eps_data,
-            trail_eps_yearly_data,
+            trail_rev_data,
+            trail_eps_data,
             pe_data,
             industries,
         ) = await asyncio.gather(
@@ -885,15 +881,7 @@ class BloombergService:
                 "BEST_SALES",
                 start_date,
                 end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
-                periodicity="WEEKLY",
-                tickers=universe,
-            ),
-            self._fetch_bdh_metric(
-                "BEST_SALES",
-                start_date,
-                end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "2BF")],
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
                 periodicity="WEEKLY",
                 tickers=universe,
             ),
@@ -901,7 +889,7 @@ class BloombergService:
                 "BEST_GROSS_MARGIN",
                 start_date,
                 end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
                 periodicity="WEEKLY",
                 tickers=universe,
             ),
@@ -909,13 +897,19 @@ class BloombergService:
                 "BEST_EPS",
                 start_date,
                 end_date,
-                overrides=[("BEST_FPERIOD_OVERRIDE", "1BF")],
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
                 periodicity="WEEKLY",
                 tickers=universe,
             ),
-            self._fetch_yearly_bdh_metric(
-                "IS_COMP_EPS_EXCL_STOCK_COMP",
-                self._shift_date_back(start_date, years=2),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_NET_SALES",
+                trail_start,
+                end_date,
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_EPS",
+                trail_start,
                 end_date,
                 tickers=universe,
             ),
@@ -934,10 +928,10 @@ class BloombergService:
         return self._assemble_dashboard_json(
             ev_data,
             fwd_rev_data,
-            nxt_rev_data,
             gross_margin_data,
             fwd_eps_data,
-            trail_eps_yearly_data,
+            trail_rev_data,
+            trail_eps_data,
             pe_data,
             industries,
             universe,
