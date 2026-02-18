@@ -24,14 +24,14 @@ router = APIRouter(tags=["valuation"])
 class ValuationEstimateRequest(BaseModel):
     ticker: str | None = None
     revenue_growth: float  # decimal, 0.08 = 8%
-    eps_growth: float  # decimal
+    eps_growth: float  # decimal — used for regression; DCF fallback if no estimates
+    eps_growth_estimates: list[float] | None = None  # year-by-year EPS growth for DCF
     forward_eps: float | None = None
     current_pe: float | None = None
     current_ev_revenue: float | None = None
     current_ev_gp: float | None = None
     dcf_discount_rate: float = Field(0.10, ge=0.01, le=0.30)
-    dcf_terminal_growth: float = Field(0.03, ge=0.0, le=0.10)
-    dcf_projection_years: int = Field(10, ge=3, le=20)
+    dcf_terminal_growth: float = Field(0.0, ge=-0.02, le=0.10)
     dcf_fade_period: int = Field(5, ge=1, le=15)
     snapshot_id: int | None = None
 
@@ -70,10 +70,9 @@ class DcfProjection(BaseModel):
 
 class DcfInputs(BaseModel):
     forward_eps: float
-    eps_growth: float
+    eps_growth_estimates: list[float]
     discount_rate: float
     terminal_growth: float
-    projection_years: int
     fade_period: int
 
 
@@ -172,9 +171,9 @@ async def valuation_estimate(
             current_pe=body.current_pe,
             current_ev_revenue=body.current_ev_revenue,
             current_ev_gp=body.current_ev_gp,
+            eps_growth_estimates=body.eps_growth_estimates,
             dcf_discount_rate=body.dcf_discount_rate,
             dcf_terminal_growth=body.dcf_terminal_growth,
-            dcf_projection_years=body.dcf_projection_years,
             dcf_fade_period=body.dcf_fade_period,
         )
     except Exception as exc:

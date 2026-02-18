@@ -240,25 +240,46 @@ def fade_growth_rate(
 # ---------------------------------------------------------------------------
 def compute_dcf(
     forward_eps: float,
-    eps_growth: float,
-    discount_rate: float,
-    terminal_growth: float,
-    projection_years: int,
-    fade_period: int,
+    eps_growth_estimates: list[float],
+    discount_rate: float = 0.10,
+    terminal_growth: float = 0.0,
+    fade_period: int = 5,
     current_pe: float | None = None,
 ) -> dict | None:
-    """Port of dcf.ts computeDcf. Returns projections, PVs, implied P/E."""
+    """DCF valuation with explicit year-by-year EPS growth estimates.
+
+    Projection phases:
+      1. Explicit years — one per entry in eps_growth_estimates.
+      2. Fade years — linear decel from last estimate to terminal_growth
+         over fade_period additional years.
+    Terminal value via Gordon Growth at the end of the fade period.
+    """
     if forward_eps <= 0:
         return None
     if discount_rate <= terminal_growth:
         return None
+    if not eps_growth_estimates:
+        return None
+
+    n_explicit = len(eps_growth_estimates)
+    total_years = n_explicit + fade_period
+    last_explicit_growth = eps_growth_estimates[-1]
 
     projections: list[dict] = []
     eps = forward_eps
     sum_pv_eps = 0.0
 
-    for y in range(1, projection_years + 1):
-        growth_rate = fade_growth_rate(y, eps_growth, terminal_growth, fade_period)
+    for y in range(1, total_years + 1):
+        if y <= n_explicit:
+            # Explicit estimate
+            growth_rate = eps_growth_estimates[y - 1]
+        else:
+            # Fade from last explicit growth to terminal
+            fade_year = y - n_explicit
+            growth_rate = fade_growth_rate(
+                fade_year, last_explicit_growth, terminal_growth, fade_period
+            )
+
         eps = eps * (1 + growth_rate)
         discount_factor = 1 / ((1 + discount_rate) ** y)
         present_value = eps * discount_factor
@@ -277,7 +298,7 @@ def compute_dcf(
     # Gordon Growth Model terminal value
     terminal_eps = eps * (1 + terminal_growth)
     terminal_value = terminal_eps / (discount_rate - terminal_growth)
-    pv_terminal_value = terminal_value / ((1 + discount_rate) ** projection_years)
+    pv_terminal_value = terminal_value / ((1 + discount_rate) ** total_years)
 
     total_pv_per_share = sum_pv_eps + pv_terminal_value
     implied_pe = total_pv_per_share / forward_eps
@@ -306,10 +327,9 @@ def compute_dcf(
 # ---------------------------------------------------------------------------
 def compute_sensitivity_table(
     forward_eps: float,
-    eps_growth: float,
+    eps_growth_estimates: list[float],
     discount_rate: float,
     terminal_growth: float,
-    projection_years: int,
     fade_period: int,
 ) -> dict:
     """5×5 grid of implied P/E varying dr ±0.01/±0.02 and tg ±0.01/±0.02."""
@@ -323,9 +343,7 @@ def compute_sensitivity_table(
     for dr in discount_rates:
         row: list[float | None] = []
         for tg in terminal_growths:
-            res = compute_dcf(
-                forward_eps, eps_growth, dr, tg, projection_years, fade_period
-            )
+            res = compute_dcf(forward_eps, eps_growth_estimates, dr, tg, fade_period)
             row.append(res["implied_pe"] if res else None)
         grid.append(row)
 
@@ -391,9 +409,9 @@ def compute_valuation_estimate(
     current_pe: float | None = None,
     current_ev_revenue: float | None = None,
     current_ev_gp: float | None = None,
+    eps_growth_estimates: list[float] | None = None,
     dcf_discount_rate: float = 0.10,
-    dcf_terminal_growth: float = 0.03,
-    dcf_projection_years: int = 10,
+    dcf_terminal_growth: float = 0.0,
     dcf_fade_period: int = 5,
 ) -> dict:
     """Compute regression-implied multiples, DCF, and peer context.
@@ -499,32 +517,32 @@ def compute_valuation_estimate(
         )
 
     # ---- DCF valuation ----
+    # Fall back to single eps_growth wrapped in a list if no explicit estimates
+    dcf_estimates = eps_growth_estimates if eps_growth_estimates else [eps_growth]
+
     dcf_result: dict | None = None
     if forward_eps is not None and forward_eps > 0:
         dcf_result = compute_dcf(
             forward_eps=forward_eps,
-            eps_growth=eps_growth,
+            eps_growth_estimates=dcf_estimates,
             discount_rate=dcf_discount_rate,
             terminal_growth=dcf_terminal_growth,
-            projection_years=dcf_projection_years,
             fade_period=dcf_fade_period,
             current_pe=current_pe,
         )
         if dcf_result is not None:
             sensitivity = compute_sensitivity_table(
                 forward_eps=forward_eps,
-                eps_growth=eps_growth,
+                eps_growth_estimates=dcf_estimates,
                 discount_rate=dcf_discount_rate,
                 terminal_growth=dcf_terminal_growth,
-                projection_years=dcf_projection_years,
                 fade_period=dcf_fade_period,
             )
             dcf_result["inputs"] = {
                 "forward_eps": forward_eps,
-                "eps_growth": eps_growth,
+                "eps_growth_estimates": dcf_estimates,
                 "discount_rate": dcf_discount_rate,
                 "terminal_growth": dcf_terminal_growth,
-                "projection_years": dcf_projection_years,
                 "fade_period": dcf_fade_period,
             }
             dcf_result["sensitivity"] = sensitivity["implied_pe_grid"]
