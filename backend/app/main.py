@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.db import Base, engine
-from app.routes import bloomberg, dashboard, template, upload
+from app.routes import bloomberg, dashboard, template, upload, valuation
 from app.services.bloomberg_service import BloombergService
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ app.include_router(upload.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(template.router, prefix="/api")
 app.include_router(bloomberg.router, prefix="/api")
+app.include_router(valuation.router, prefix="/api")
 
 
 @app.get("/api/health")
