@@ -15,7 +15,7 @@ import {
 import { DashboardData, COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterPoints, percentile } from '../lib/filters';
-import { linearRegression } from '../lib/regression';
+import { linearRegressionTrimmed } from '../lib/regression';
 import MetricToggle from './MetricToggle';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
@@ -46,7 +46,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
         result.push(null);
         continue;
       }
-      const rg = linearRegression(pts.map((p) => [p.x, p.y] as [number, number]));
+      const rg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y] as [number, number]));
       result.push(rg ? +rg.intercept.toFixed(6) : null);
     }
     return result;
