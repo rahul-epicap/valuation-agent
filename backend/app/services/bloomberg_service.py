@@ -115,6 +115,52 @@ class BloombergService:
     def tickers(self) -> list[str]:
         return list(self._tickers)
 
+    def set_ticker_universe(self, tickers: list[str]) -> None:
+        """Override the internal ticker list with a custom universe."""
+        self._tickers = list(tickers)
+        logger.info("Ticker universe overridden: %d tickers", len(self._tickers))
+
+    async def fetch_descriptions_bds(
+        self,
+        tickers: list[str] | None = None,
+        field: str = "CIE_DES_BULK",
+    ) -> dict[str, str]:
+        """Fetch business descriptions via BDS for each ticker.
+
+        Falls back to LONG_COMP_DESC_BULK if the primary field returns empty.
+        Returns {bbg_ticker: description_text}.
+        """
+        ticker_universe = tickers or self._tickers
+        result: dict[str, str] = {}
+        fallback_field = "LONG_COMP_DESC_BULK"
+
+        for bbg_ticker in ticker_universe:
+            for f in (field, fallback_field):
+                try:
+                    df = await asyncio.to_thread(self._bds_sync, bbg_ticker, f)
+                except Exception:
+                    continue
+
+                if df.empty:
+                    continue
+
+                text_parts: list[str] = []
+                for col in df.columns:
+                    for val in df[col]:
+                        if val is not None and str(val).strip():
+                            text_parts.append(str(val).strip())
+
+                if text_parts:
+                    result[bbg_ticker] = " ".join(text_parts)
+                    break
+
+        logger.info(
+            "Fetched descriptions for %d / %d tickers",
+            len(result),
+            len(ticker_universe),
+        )
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { DashboardData, SnapshotMeta } from './types';
+import { DashboardData, SnapshotMeta, IndexInfo, PeerSearchResponse, PeerValuationResult } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -57,6 +57,54 @@ export async function triggerBloombergUpdate(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Bloomberg update failed' }));
     throw new Error(err.detail || 'Bloomberg update failed');
+  }
+  return res.json();
+}
+
+export async function fetchIndices(): Promise<IndexInfo[]> {
+  const res = await fetch(`${API_BASE}/api/indices`);
+  if (!res.ok) throw new Error(`Failed to fetch indices: ${res.status}`);
+  return res.json();
+}
+
+export async function searchPeers(
+  params: { ticker?: string; text?: string; top_k?: number },
+  signal?: AbortSignal,
+): Promise<PeerSearchResponse> {
+  const res = await fetch(`${API_BASE}/api/similarity/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Peer search failed' }));
+    throw new Error(err.detail || 'Peer search failed');
+  }
+  return res.json();
+}
+
+export async function fetchPeerValuation(params: {
+  ticker: string;
+  revenue_growth: number;
+  eps_growth: number;
+  forward_eps?: number;
+  current_pe?: number;
+  top_k_peers?: number;
+  snapshot_id?: number;
+  eps_growth_estimates?: number[];
+  dcf_discount_rate?: number;
+  dcf_terminal_growth?: number;
+  dcf_fade_period?: number;
+}): Promise<PeerValuationResult> {
+  const res = await fetch(`${API_BASE}/api/valuation/peer-estimate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Peer valuation failed' }));
+    throw new Error(err.detail || 'Peer valuation failed');
   }
   return res.json();
 }

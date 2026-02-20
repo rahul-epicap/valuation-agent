@@ -6,9 +6,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.db import Base, engine
-from app.routes import bloomberg, dashboard, template, upload, valuation
+from app.db import Base, engine, AsyncSessionLocal
+from app.routes import (
+    bloomberg,
+    dashboard,
+    descriptions,
+    indices,
+    peer_valuation,
+    template,
+    upload,
+    valuation,
+)
 from app.services.bloomberg_service import BloombergService
+from app.services import index_service
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +29,22 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Seed indices from indices.json
+    try:
+        async with AsyncSessionLocal() as db:
+            await index_service.seed_indices(db)
+            logger.info("Indices seeded successfully")
+    except Exception:
+        logger.warning("Failed to seed indices", exc_info=True)
+
     # Try to start Bloomberg service (non-fatal if Bloomberg Terminal is not running)
     bbg_service: BloombergService | None = None
     try:
         bbg_service = BloombergService()
         bbg_service.start()
         bloomberg.set_service(bbg_service)
+        indices.set_service(bbg_service)
+        descriptions.set_service(bbg_service)
         logger.info("Bloomberg service initialized successfully")
     except Exception:
         logger.warning(
@@ -61,6 +81,9 @@ app.include_router(dashboard.router, prefix="/api")
 app.include_router(template.router, prefix="/api")
 app.include_router(bloomberg.router, prefix="/api")
 app.include_router(valuation.router, prefix="/api")
+app.include_router(indices.router, prefix="/api")
+app.include_router(descriptions.router, prefix="/api")
+app.include_router(peer_valuation.router, prefix="/api")
 
 
 @app.get("/api/health")

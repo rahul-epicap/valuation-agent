@@ -1,0 +1,4 @@
+[
+  { "bbg_ticker": "SPX Index", "short_name": "SPX", "display_name": "S&P 500" },
+  { "bbg_ticker": "NDX Index", "short_name": "NDX", "display_name": "NASDAQ 100" }
+]

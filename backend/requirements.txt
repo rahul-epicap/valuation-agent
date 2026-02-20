@@ -11,3 +11,5 @@ alembic==1.14.1
 blpapi>=3.24.0
 blp>=0.0.3
 pandas>=2.0.0
+turbopuffer>=0.3.0
+voyageai>=0.3.0

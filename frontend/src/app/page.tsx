@@ -14,6 +14,7 @@ import ChartContainer from '../components/ChartContainer';
 import UploadModal from '../components/UploadModal';
 import ValueScoreView from '../components/ValueScoreView';
 import DcfView from '../components/DcfView';
+import PeerValuationView from '../components/PeerValuationView';
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -143,7 +144,7 @@ function DashboardContent({
   onUploadClose: () => void;
   onUploadSuccess: () => void;
 }) {
-  const { state, dispatch, allIndustries } = useDashboardState(data);
+  const { state, dispatch, allIndustries, allIndices } = useDashboardState(data);
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg0)' }}>
@@ -164,12 +165,15 @@ function DashboardContent({
           state={state}
           dispatch={dispatch}
           allIndustries={allIndustries}
+          allIndices={allIndices}
         />
         <main className="overflow-y-auto" style={{ padding: '16px 20px' }}>
           {state.view === 'regression' ? (
             <ValueScoreView data={data} state={state} dispatch={dispatch} />
           ) : state.view === 'dcf' ? (
             <DcfView data={data} state={state} dispatch={dispatch} />
+          ) : state.view === 'peers' ? (
+            <PeerValuationView data={data} state={state} dispatch={dispatch} />
           ) : (
             <>
               <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
