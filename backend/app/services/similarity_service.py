@@ -15,20 +15,32 @@ logger = logging.getLogger(__name__)
 
 _EMBED_BATCH_SIZE = 128
 
+# Module-level singletons (lazy-init)
+_tpuf_client = None
+_voyage_client = None
+
 
 def _get_voyage_client():
     """Lazy-init Voyage AI client."""
-    import voyageai
+    global _voyage_client
+    if _voyage_client is None:
+        import voyageai
 
-    return voyageai.Client(api_key=settings.VOYAGEAI_API_KEY)
+        _voyage_client = voyageai.Client(api_key=settings.VOYAGEAI_API_KEY)
+    return _voyage_client
 
 
 def _get_tpuf_namespace():
-    """Lazy-init TurboPuffer namespace."""
-    import turbopuffer as tpuf
+    """Lazy-init TurboPuffer namespace (v1.16+ client API)."""
+    global _tpuf_client
+    if _tpuf_client is None:
+        import turbopuffer as tpuf
 
-    tpuf.api_key = settings.TURBOPUFFER_API_KEY
-    return tpuf.Namespace(settings.TURBOPUFFER_NAMESPACE)
+        _tpuf_client = tpuf.Turbopuffer(
+            api_key=settings.TURBOPUFFER_API_KEY,
+            region=settings.TURBOPUFFER_REGION,
+        )
+    return _tpuf_client.namespace(settings.TURBOPUFFER_NAMESPACE)
 
 
 def embed_texts(
@@ -66,10 +78,19 @@ def upsert_vectors(
 ) -> None:
     """Upsert vectors to TurboPuffer namespace with metadata."""
     ns = _get_tpuf_namespace()
-    ns.upsert(
-        ids=ids,
-        vectors=vectors,
-        attributes=attributes or {},
+    attrs = attributes or {}
+
+    # Build row dicts for the new write API
+    rows: list[dict] = []
+    for idx, (doc_id, vec) in enumerate(zip(ids, vectors)):
+        row: dict = {"id": doc_id, "vector": vec}
+        for attr_name, attr_values in attrs.items():
+            row[attr_name] = attr_values[idx]
+        rows.append(row)
+
+    ns.write(
+        upsert_rows=rows,
+        distance_metric="cosine_distance",
     )
     logger.info("Upserted %d vectors to TurboPuffer", len(ids))
 
@@ -144,28 +165,33 @@ async def find_similar(
     # Embed the query
     query_vec = embed_texts([text_to_embed], input_type="query")[0]
 
-    # Query TurboPuffer
+    # Query TurboPuffer (v1.16+ API)
     ns = _get_tpuf_namespace()
-    results = ns.query(
-        vector=query_vec,
+    response = ns.query(
+        rank_by=("vector", "ANN", query_vec),
         top_k=top_k + 1,  # +1 to exclude self if querying by ticker
         include_attributes=["description", "ticker"],
     )
 
     output: list[dict] = []
-    for row in results:
-        ticker = row.attributes.get("ticker", row.id) if row.attributes else row.id
+    for row in response.rows or []:
+        # Extra attributes are accessible via model_extra
+        extras = row.model_extra or {}
+        ticker = extras.get("ticker", row.id)
         # Skip self
         if query_ticker and ticker == query_ticker:
             continue
 
+        # Distance is returned as '$dist' extra field by TurboPuffer
+        dist = extras.get("$dist")
+        # Convert cosine distance to similarity score (1 - distance)
+        score = round(1.0 - float(dist), 4) if dist is not None else 0.0
+
         output.append(
             {
                 "ticker": ticker,
-                "score": round(float(row.dist), 4),
-                "description": (
-                    row.attributes.get("description", "") if row.attributes else ""
-                ),
+                "score": score,
+                "description": extras.get("description", ""),
             }
         )
 

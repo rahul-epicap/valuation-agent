@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import TickerDescription
-from app.services import description_service, similarity_service
+from app.services import description_service, index_service, similarity_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["descriptions"])
@@ -30,14 +30,30 @@ def set_service(service: object) -> None:
 async def fetch_descriptions_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Fetch business descriptions from Bloomberg for all tickers."""
+    """Fetch business descriptions from Bloomberg for all tickers in the index universe."""
     if _bbg_service is None:
         raise HTTPException(
             status_code=503,
             detail="Bloomberg service unavailable — Bloomberg Terminal may not be running.",
         )
 
-    result = await description_service.fetch_descriptions(_bbg_service, db)
+    # Use the full index universe (all current SPX + NDX members)
+    universe_tickers = await index_service.get_all_current_tickers(db)
+    if universe_tickers:
+        # Convert short tickers to Bloomberg format
+        bbg_tickers = [f"{t} US Equity" for t in universe_tickers]
+        logger.info(
+            "Fetching descriptions for %d tickers from index universe",
+            len(bbg_tickers),
+        )
+    else:
+        # Fallback to bloomberg service's default ticker list
+        bbg_tickers = None
+        logger.info("No index universe found, using default ticker list")
+
+    result = await description_service.fetch_descriptions(
+        _bbg_service, db, tickers=bbg_tickers
+    )
     return {"status": "ok", "fetched_count": len(result)}
 
 

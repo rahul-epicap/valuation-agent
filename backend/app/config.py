@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # TurboPuffer vector search
     TURBOPUFFER_API_KEY: str = ""
     TURBOPUFFER_NAMESPACE: str = "valuation-descriptions"
+    TURBOPUFFER_REGION: str = "aws-us-west-2"
 
     # Voyage AI embeddings
     VOYAGEAI_API_KEY: str = ""
