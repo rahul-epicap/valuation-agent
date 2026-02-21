@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
             await index_service.seed_indices(db)
             logger.info("Indices seeded successfully")
     except Exception:
-        logger.warning("Failed to seed indices", exc_info=True)
+        logger.error("Failed to seed indices", exc_info=True)
 
     # Try to start Bloomberg service (non-fatal if Bloomberg Terminal is not running)
     bbg_service: BloombergService | None = None

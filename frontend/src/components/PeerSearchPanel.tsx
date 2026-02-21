@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { DashboardData, PeerSearchResult } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import { searchPeers } from '../lib/api';
 
 interface PeerSearchPanelProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function PeerSearchPanel({ data, state, dispatch }: PeerSearchPanelProps) {

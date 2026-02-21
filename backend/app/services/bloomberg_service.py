@@ -248,6 +248,9 @@ class BloombergService:
             overrides=overrides or [],
         )
 
+    # Public alias for external callers (services should use this)
+    bds_sync = _bds_sync
+
     @staticmethod
     def _batches(items: list[str], size: int) -> list[list[str]]:
         """Split a list into batches of the given size."""

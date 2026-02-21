@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -43,11 +44,11 @@ def _get_tpuf_namespace():
     return _tpuf_client.namespace(settings.TURBOPUFFER_NAMESPACE)
 
 
-def embed_texts(
+def _embed_texts_sync(
     texts: list[str],
     input_type: str = "document",
 ) -> list[list[float]]:
-    """Batch embed texts using Voyage AI.
+    """Batch embed texts using Voyage AI (synchronous, for use with to_thread).
 
     Args:
         texts: Strings to embed.
@@ -71,12 +72,12 @@ def embed_texts(
     return all_embeddings
 
 
-def upsert_vectors(
+def _upsert_vectors_sync(
     ids: list[str],
     vectors: list[list[float]],
     attributes: dict[str, list] | None = None,
 ) -> None:
-    """Upsert vectors to TurboPuffer namespace with metadata."""
+    """Upsert vectors to TurboPuffer namespace (synchronous, for use with to_thread)."""
     ns = _get_tpuf_namespace()
     attrs = attributes or {}
 
@@ -95,6 +96,25 @@ def upsert_vectors(
     logger.info("Upserted %d vectors to TurboPuffer", len(ids))
 
 
+def _query_similar_sync(
+    query_vec: list[float],
+    top_k: int,
+) -> list[dict]:
+    """Query TurboPuffer for similar vectors (synchronous, for use with to_thread)."""
+    ns = _get_tpuf_namespace()
+    response = ns.query(
+        rank_by=("vector", "ANN", query_vec),
+        top_k=top_k,
+        include_attributes=["description", "ticker"],
+    )
+    # Return raw row data for processing by caller
+    results: list[dict] = []
+    for row in response.rows or []:
+        extras = row.model_extra or {}
+        results.append({"id": row.id, **extras})
+    return results
+
+
 async def sync_descriptions(db: AsyncSession) -> int:
     """Embed all unembedded descriptions and upsert to TurboPuffer.
 
@@ -111,7 +131,7 @@ async def sync_descriptions(db: AsyncSession) -> int:
     texts = [r.description for r in rows]
 
     logger.info("Embedding %d descriptions", len(texts))
-    vectors = embed_texts(texts, input_type="document")
+    vectors = await asyncio.to_thread(_embed_texts_sync, texts, "document")
 
     # Build attributes
     attributes: dict[str, list] = {
@@ -120,7 +140,7 @@ async def sync_descriptions(db: AsyncSession) -> int:
     }
 
     # Upsert to TurboPuffer
-    upsert_vectors(tickers, vectors, attributes)
+    await asyncio.to_thread(_upsert_vectors_sync, tickers, vectors, attributes)
 
     # Update embedded_at
     now = datetime.now(timezone.utc)
@@ -162,28 +182,23 @@ async def find_similar(
         else:
             return []
 
-    # Embed the query
-    query_vec = embed_texts([text_to_embed], input_type="query")[0]
+    # Embed the query (offloaded to thread)
+    query_vec = (await asyncio.to_thread(_embed_texts_sync, [text_to_embed], "query"))[
+        0
+    ]
 
-    # Query TurboPuffer (v1.16+ API)
-    ns = _get_tpuf_namespace()
-    response = ns.query(
-        rank_by=("vector", "ANN", query_vec),
-        top_k=top_k + 1,  # +1 to exclude self if querying by ticker
-        include_attributes=["description", "ticker"],
-    )
+    # Query TurboPuffer (offloaded to thread)
+    raw_results = await asyncio.to_thread(_query_similar_sync, query_vec, top_k + 1)
 
     output: list[dict] = []
-    for row in response.rows or []:
-        # Extra attributes are accessible via model_extra
-        extras = row.model_extra or {}
-        ticker = extras.get("ticker", row.id)
+    for row_data in raw_results:
+        ticker = row_data.get("ticker", row_data.get("id", ""))
         # Skip self
         if query_ticker and ticker == query_ticker:
             continue
 
         # Distance is returned as '$dist' extra field by TurboPuffer
-        dist = extras.get("$dist")
+        dist = row_data.get("$dist")
         # Convert cosine distance to similarity score (1 - distance)
         score = round(1.0 - float(dist), 4) if dist is not None else 0.0
 
@@ -191,7 +206,7 @@ async def find_similar(
             {
                 "ticker": ticker,
                 "score": score,
-                "description": extras.get("description", ""),
+                "description": row_data.get("description", ""),
             }
         )
 

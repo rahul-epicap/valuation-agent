@@ -72,7 +72,7 @@ async def fetch_descriptions(
         for field in _DESC_FIELDS:
             try:
                 df = await asyncio.to_thread(
-                    bloomberg._bds_sync,
+                    bloomberg.bds_sync,
                     bbg_ticker,
                     field,
                 )

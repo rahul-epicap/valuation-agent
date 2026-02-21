@@ -1,14 +1,14 @@
 'use client';
 
 import { DashboardData } from '../lib/types';
-import { IndexFilterMode } from '../hooks/useDashboardState';
+import { Action, IndexFilterMode } from '../hooks/useDashboardState';
 
 interface IndexFilterProps {
   data: DashboardData;
   activeIndices: Set<string>;
   indexFilterMode: IndexFilterMode;
   allIndices: string[];
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function IndexFilter({

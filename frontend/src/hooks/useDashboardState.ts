@@ -40,9 +40,10 @@ export interface DashboardState {
   peerValTicker: string | null;
   peerValResults: PeerValuationResult | null;
   peerValLoading: boolean;
+  peerValError: string | null;
 }
 
-type Action =
+export type Action =
   | { type: 'SET_VIEW'; payload: ViewMode }
   | { type: 'SET_REG'; payload: MetricType }
   | { type: 'SET_MUL'; payload: MetricType }
@@ -78,7 +79,8 @@ type Action =
   | { type: 'SET_PEER_ERROR'; payload: string | null }
   | { type: 'SET_PEER_VAL_TICKER'; payload: string | null }
   | { type: 'SET_PEER_VAL_RESULTS'; payload: PeerValuationResult | null }
-  | { type: 'SET_PEER_VAL_LOADING'; payload: boolean };
+  | { type: 'SET_PEER_VAL_LOADING'; payload: boolean }
+  | { type: 'SET_PEER_VAL_ERROR'; payload: string | null };
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -182,6 +184,8 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, peerValResults: action.payload };
     case 'SET_PEER_VAL_LOADING':
       return { ...state, peerValLoading: action.payload };
+    case 'SET_PEER_VAL_ERROR':
+      return { ...state, peerValError: action.payload };
     default:
       return state;
   }
@@ -222,6 +226,7 @@ export function createInitialState(data: DashboardData): DashboardState {
     peerValTicker: null,
     peerValResults: null,
     peerValLoading: false,
+    peerValError: null,
   };
 }
 

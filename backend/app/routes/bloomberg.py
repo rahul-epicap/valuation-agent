@@ -226,6 +226,7 @@ async def fetch_batch_for_tickers(
     if body.snapshot_id:
         # Merge into existing snapshot
         from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
 
         result = await db.execute(
             select(Snapshot).where(Snapshot.id == body.snapshot_id)
@@ -241,6 +242,7 @@ async def fetch_batch_for_tickers(
             snapshot.dashboard_data, batch_data
         )
         snapshot.dashboard_data = merged
+        flag_modified(snapshot, "dashboard_data")
         snapshot.ticker_count = len(merged.get("tickers", []))
         snapshot.date_count = len(merged.get("dates", []))
         snapshot.industry_count = len(set(merged.get("industries", {}).values()))
