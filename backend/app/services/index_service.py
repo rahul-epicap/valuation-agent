@@ -204,7 +204,7 @@ async def _fetch_and_upsert_memberships(
             continue
 
         if df.empty:
-            logger.warning("BDS returned empty for %s at %s", idx.bbg_ticker, date_str)
+            logger.debug("BDS returned empty for %s at %s", idx.bbg_ticker, date_str)
             continue
 
         logger.info("BDS returned %d rows for %s at %s", len(df), idx.bbg_ticker, date_str)

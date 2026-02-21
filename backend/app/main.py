@@ -20,7 +20,6 @@ from app.routes import (
 from app.services.bloomberg_service import BloombergService
 from app.services import index_service
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
