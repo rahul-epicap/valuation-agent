@@ -1,12 +1,12 @@
 'use client';
 
-import { DashboardData, HIGHLIGHT_COLORS } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { DashboardData } from '../lib/types';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 
 interface TickerHighlightProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function TickerHighlight({ data, state, dispatch }: TickerHighlightProps) {

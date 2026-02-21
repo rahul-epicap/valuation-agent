@@ -1,9 +1,11 @@
 'use client';
 
+import { Action } from '../hooks/useDashboardState';
+
 interface IndustryFilterProps {
   allIndustries: string[];
   activeIndustries: Set<string>;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function IndustryFilter({ allIndustries, activeIndustries, dispatch }: IndustryFilterProps) {

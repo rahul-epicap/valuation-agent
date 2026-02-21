@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { DashboardData } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import {
   extractDcfInputs,
   computeDcf,
@@ -16,7 +16,7 @@ import CompanyHeader from './CompanyHeader';
 interface DcfViewProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function DcfView({ data, state, dispatch }: DcfViewProps) {
@@ -135,7 +135,7 @@ function DcfInputControls({
   dispatch,
 }: {
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }) {
   const inputStyle = {
     background: 'var(--bg0)',

@@ -1,7 +1,7 @@
 'use client';
 
 import { DashboardData } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import IndexFilter from './IndexFilter';
 import IndustryFilter from './IndustryFilter';
 import GrowthRateFilter from './GrowthRateFilter';
@@ -12,7 +12,7 @@ import PeerSearchPanel from './PeerSearchPanel';
 interface SidebarProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
   allIndustries: string[];
   allIndices: string[];
 }
