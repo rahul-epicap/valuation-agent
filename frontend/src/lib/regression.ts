@@ -1,4 +1,4 @@
-import { RegressionResult, ComparisonResult } from './types';
+import { RegressionResult, CooksRegressionResult, ComparisonResult } from './types';
 
 export function linearRegression(pts: [number, number][]): RegressionResult | null {
   const n = pts.length;
@@ -81,9 +81,11 @@ export function linearRegressionCooks(
   pts: [number, number][],
   thresholdMultiplier = 1.0,
   maxIter = 2
-): (RegressionResult & { nOriginal: number }) | null {
+): CooksRegressionResult | null {
   if (pts.length < 3) return null;
   const nOriginal = pts.length;
+  // Track original indices so we can report which points were removed
+  let currentIdx = pts.map((_, i) => i);
   let current = [...pts];
   const p = 2; // number of parameters (slope + intercept)
 
@@ -106,6 +108,7 @@ export function linearRegressionCooks(
 
     const threshold = thresholdMultiplier * (4.0 / n);
     const kept: [number, number][] = [];
+    const keptIdx: number[] = [];
     for (let i = 0; i < n; i++) {
       const h = 1.0 / n + (current[i][0] - xMean) ** 2 / ssX;
       const denom = 1 - h;
@@ -113,16 +116,22 @@ export function linearRegressionCooks(
       const cookD = (residuals[i] ** 2 / (p * mse)) * (h / (denom * denom));
       if (cookD <= threshold) {
         kept.push(current[i]);
+        keptIdx.push(currentIdx[i]);
       }
     }
 
     if (kept.length < 3 || kept.length === current.length) break;
     current = kept;
+    currentIdx = keptIdx;
   }
 
   const final = linearRegression(current);
   if (!final) return null;
-  return { ...final, nOriginal };
+
+  const keptSet = new Set(currentIdx);
+  const removedIndices = pts.map((_, i) => i).filter((i) => !keptSet.has(i));
+
+  return { ...final, nOriginal, removedIndices };
 }
 
 /**

@@ -48,11 +48,23 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
   );
 
   const { datasets, hlLegend } = useMemo(() => {
-    const norm = pts.filter((p) => !state.hlTk.has(p.t));
-    const hlP = pts.filter((p) => state.hlTk.has(p.t));
+    const removedSet = new Set(regression?.removedIndices ?? []);
     const hlA = [...state.hlTk];
     const hlCM: Record<string, string> = {};
     hlA.forEach((tk, i) => (hlCM[tk] = HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length]));
+
+    // Separate points: normal kept, Cook's outliers, and highlighted
+    const norm: typeof pts = [];
+    const outliers: typeof pts = [];
+    pts.forEach((p, i) => {
+      if (state.hlTk.has(p.t)) return; // highlighted handled separately
+      if (removedSet.has(i)) {
+        outliers.push(p);
+      } else {
+        norm.push(p);
+      }
+    });
+    const hlP = pts.filter((p) => state.hlTk.has(p.t));
 
     const xs = pts.map((p) => p.x);
     const xMin = xs.length > 0 ? Math.min(...xs) : 0;
@@ -71,18 +83,34 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         pointHoverRadius: 5,
         order: 3,
       },
-      {
-        label: 'Regression',
-        data: pts.length >= 3 ? [{ x: xMin, y: sl * xMin + ic }, { x: xMax, y: sl * xMax + ic }] : [],
-        borderColor: col.l,
-        borderWidth: 2,
-        borderDash: [6, 3],
-        pointRadius: 0,
-        showLine: true,
-        fill: false,
-        order: 2,
-      },
     ];
+
+    // Cook's Distance outliers — shown as red crossed-out dots
+    if (outliers.length > 0) {
+      ds.push({
+        label: "Cook's Outliers",
+        data: outliers.map((p) => ({ x: p.x, y: p.y, t: p.t })),
+        backgroundColor: 'rgba(239,68,68,.25)',
+        borderColor: 'rgba(239,68,68,.5)',
+        borderWidth: 1.5,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        pointStyle: 'crossRot' as const,
+        order: 4,
+      });
+    }
+
+    ds.push({
+      label: 'Regression',
+      data: pts.length >= 3 ? [{ x: xMin, y: sl * xMin + ic }, { x: xMax, y: sl * xMax + ic }] : [],
+      borderColor: col.l,
+      borderWidth: 2,
+      borderDash: [6, 3],
+      pointRadius: 0,
+      showLine: true,
+      fill: false,
+      order: 2,
+    });
 
     const byTk: Record<string, typeof hlP> = {};
     hlP.forEach((p) => {
@@ -127,8 +155,10 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         padding: 8,
         callbacks: {
           title: (items: TooltipItem<'scatter'>[]) => (items[0]?.raw as Record<string, unknown>)?.t as string || '',
-          label: (item: TooltipItem<'scatter'>) =>
-            `Multiple: ${item.parsed.y?.toFixed(2)}x  |  Growth: ${item.parsed.x?.toFixed(1)}%`,
+          label: (item: TooltipItem<'scatter'>) => {
+            const prefix = item.dataset.label === "Cook's Outliers" ? '✕ ' : '';
+            return `${prefix}Multiple: ${item.parsed.y?.toFixed(2)}x  |  Growth: ${item.parsed.x?.toFixed(1)}%`;
+          },
         },
       },
     },
@@ -146,6 +176,8 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     },
   };
 
+  const nRemoved = regression?.removedIndices?.length ?? 0;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -154,7 +186,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
             {METRIC_TITLES[type]}
           </div>
           <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '1px' }}>
-            Linear regression — highlighted tickers shown in colour
+            Cook&apos;s Distance regression — outliers shown as red ✕
           </div>
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_REG', payload: t })} />
@@ -163,12 +195,26 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         regression={regression}
         date={data.dates[state.di]}
         metricType={type}
+        nRemoved={nRemoved}
         activeIndexNames={state.idxFilterMode === 'on' ? [...state.idxOn] : undefined}
       />
       <div className="relative w-full" style={{ height: 380 }}>
         <Scatter data={{ datasets }} options={options} />
       </div>
       <div className="flex flex-wrap gap-1 mt-1.5">
+        {nRemoved > 0 && (
+          <span
+            className="px-1.5 py-0.5 rounded font-semibold"
+            style={{
+              fontSize: '9.5px',
+              background: 'rgba(239,68,68,.12)',
+              color: '#ef4444',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            ✕ {nRemoved} outlier{nRemoved !== 1 ? 's' : ''} removed
+          </span>
+        )}
         {hlLegend.length > 0 ? (
           hlLegend.map(({ ticker, color }) => (
             <span
