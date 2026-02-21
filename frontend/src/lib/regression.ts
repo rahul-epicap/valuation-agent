@@ -71,7 +71,62 @@ export function linearRegressionTrimmed(
 }
 
 /**
- * Approach 2: Huber Robust Regression (Iteratively Reweighted Least Squares).
+ * Approach 2: Cook's Distance-based outlier removal.
+ * Combines residual magnitude AND leverage (extreme X values) into a single
+ * influence metric. Removes points where D_i > thresholdMultiplier * (4/n),
+ * then re-fits. This catches high-leverage points (extreme growth stocks)
+ * that residual-only trimming misses.
+ */
+export function linearRegressionCooks(
+  pts: [number, number][],
+  thresholdMultiplier = 1.0,
+  maxIter = 2
+): (RegressionResult & { nOriginal: number }) | null {
+  if (pts.length < 3) return null;
+  const nOriginal = pts.length;
+  let current = [...pts];
+  const p = 2; // number of parameters (slope + intercept)
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const n = current.length;
+    const reg = linearRegression(current);
+    if (!reg) return null;
+
+    const { slope, intercept } = reg;
+
+    // Residuals and MSE
+    const residuals = current.map(([x, y]) => y - (slope * x + intercept));
+    const mse = residuals.reduce((s, r) => s + r * r, 0) / (n - p);
+    if (mse < 1e-12) break;
+
+    // Hat matrix diagonal: h_ii = 1/n + (x_i - x_mean)² / Σ(x_j - x_mean)²
+    const xMean = current.reduce((s, [x]) => s + x, 0) / n;
+    const ssX = current.reduce((s, [x]) => s + (x - xMean) * (x - xMean), 0);
+    if (ssX < 1e-12) break;
+
+    const threshold = thresholdMultiplier * (4.0 / n);
+    const kept: [number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const h = 1.0 / n + (current[i][0] - xMean) ** 2 / ssX;
+      const denom = 1 - h;
+      if (Math.abs(denom) < 1e-12) continue; // near-singular leverage
+      const cookD = (residuals[i] ** 2 / (p * mse)) * (h / (denom * denom));
+      if (cookD <= threshold) {
+        kept.push(current[i]);
+      }
+    }
+
+    if (kept.length < 3 || kept.length === current.length) break;
+    current = kept;
+  }
+
+  const final = linearRegression(current);
+  if (!final) return null;
+  return { ...final, nOriginal };
+}
+
+/**
+ * Approach 3: Huber Robust Regression (Iteratively Reweighted Least Squares).
  * Downweights outliers rather than removing them.
  */
 export function linearRegressionRobust(
@@ -229,7 +284,22 @@ export function compareRegressionMethods(
     });
   }
 
-  // 3. Huber Robust Regression
+  // 3. Cook's Distance
+  const cooks = linearRegressionCooks(pts);
+  if (cooks) {
+    results.push({
+      method: 'cooks',
+      label: "Cook's Distance",
+      r2: cooks.r2,
+      n: cooks.n,
+      nOriginal: cooks.nOriginal,
+      slope: cooks.slope,
+      intercept: cooks.intercept,
+      predict: (x: number) => cooks.slope * x + cooks.intercept,
+    });
+  }
+
+  // 5. Huber Robust Regression
   const robust = linearRegressionRobust(pts);
   if (robust) {
     results.push({
@@ -244,7 +314,7 @@ export function compareRegressionMethods(
     });
   }
 
-  // 4. Log-Linear
+  // 6. Log-Linear
   const logLin = logLinearRegression(pts);
   if (logLin) {
     results.push({

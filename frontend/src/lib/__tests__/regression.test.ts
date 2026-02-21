@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   linearRegression,
   linearRegressionTrimmed,
+  linearRegressionCooks,
   linearRegressionRobust,
   logLinearRegression,
   compareRegressionMethods,
@@ -104,6 +105,65 @@ describe('linearRegressionTrimmed', () => {
   });
 });
 
+describe('linearRegressionCooks', () => {
+  it('returns null for fewer than 3 points', () => {
+    expect(linearRegressionCooks([[1, 2]])).toBeNull();
+  });
+
+  it('matches OLS on clean data', () => {
+    const pts = makeLine(2, 1, [0, 1, 2, 3, 4]);
+    const cooks = linearRegressionCooks(pts)!;
+    const ols = linearRegression(pts)!;
+    expect(cooks.slope).toBeCloseTo(ols.slope, 10);
+    expect(cooks.intercept).toBeCloseTo(ols.intercept, 10);
+    expect(cooks.nOriginal).toBe(5);
+  });
+
+  it('removes outliers with both high residual and leverage', () => {
+    // Cook's D = f(residual, leverage). An outlier at central x has low
+    // leverage and may not be flagged. Place outlier off-center so it
+    // has both high residual AND leverage.
+    const pts: [number, number][] = [
+      [0, 1], [1, 3], [2, 5], [3, 7], [4, 9],
+      [0.5, 2], [1.5, 4], [2.5, 6], [3.5, 8], // y = 2x + 1
+      [4.5, 60], // high residual + off-center x → high Cook's D
+    ];
+    const ols = linearRegression(pts)!;
+    const cooks = linearRegressionCooks(pts)!;
+
+    expect(cooks.r2).toBeGreaterThan(ols.r2);
+    expect(Math.abs(cooks.slope - 2)).toBeLessThan(Math.abs(ols.slope - 2));
+    expect(cooks.nOriginal).toBe(10);
+    expect(cooks.n).toBeLessThan(10);
+  });
+
+  it('removes high-leverage X-axis outliers that trimming misses', () => {
+    // Core cluster: x in [0..4], y = 2x + 1
+    // High-leverage point: extreme x, on a DIFFERENT line — pulls slope
+    const pts: [number, number][] = [
+      [0, 1], [1, 3], [2, 5], [3, 7], [4, 9],
+      [0.5, 2], [1.5, 4], [2.5, 6], [3.5, 8],
+      [50, 20], // far out on X, but low Y — pulls slope down
+    ];
+    const ols = linearRegression(pts)!;
+    const trimmed = linearRegressionTrimmed(pts)!;
+    const cooks = linearRegressionCooks(pts)!;
+
+    // OLS slope is pulled toward the outlier (much less than 2)
+    expect(ols.slope).toBeLessThan(1.5);
+
+    // Cook's should recover closer to 2.0 than trimmed
+    expect(Math.abs(cooks.slope - 2)).toBeLessThan(Math.abs(trimmed.slope - 2));
+  });
+
+  it('preserves all points when no outliers', () => {
+    const pts = makeLine(1, 0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const cooks = linearRegressionCooks(pts)!;
+    expect(cooks.n).toBe(10);
+    expect(cooks.nOriginal).toBe(10);
+  });
+});
+
 describe('linearRegressionRobust', () => {
   it('returns null for fewer than 3 points', () => {
     expect(linearRegressionRobust([[1, 2]])).toBeNull();
@@ -185,16 +245,17 @@ describe('compareRegressionMethods', () => {
     expect(compareRegressionMethods([[1, 2]])).toEqual([]);
   });
 
-  it('returns all 4 methods for valid data', () => {
+  it('returns all 5 methods for valid data', () => {
     const pts: [number, number][] = [
       [0, 2], [1, 4], [2, 6], [3, 8], [4, 10],
     ];
     const results = compareRegressionMethods(pts);
-    expect(results).toHaveLength(4);
+    expect(results).toHaveLength(5);
 
     const methods = results.map((r) => r.method);
     expect(methods).toContain('ols');
     expect(methods).toContain('trimmed');
+    expect(methods).toContain('cooks');
     expect(methods).toContain('robust');
     expect(methods).toContain('logLinear');
   });

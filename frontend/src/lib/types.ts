@@ -24,7 +24,7 @@ export interface RegressionResult {
   n: number;
 }
 
-export type RegressionMethodName = 'ols' | 'trimmed' | 'robust' | 'logLinear';
+export type RegressionMethodName = 'ols' | 'trimmed' | 'cooks' | 'robust' | 'logLinear';
 
 export interface ComparisonResult {
   method: RegressionMethodName;

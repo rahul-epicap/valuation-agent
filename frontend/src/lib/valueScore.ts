@@ -3,7 +3,7 @@ import {
   RegressionMethodName, MULTIPLE_KEYS, GROWTH_KEYS,
 } from './types';
 import { filterPoints, okEps, percentile } from './filters';
-import { linearRegressionTrimmed, compareRegressionMethods } from './regression';
+import { linearRegressionCooks, compareRegressionMethods } from './regression';
 
 export interface HistoricalBaseline {
   avgSlope: number;
@@ -48,7 +48,7 @@ export function computeHistoricalBaseline(
       data, type, di, activeTickers,
       revGrMin, revGrMax, epsGrMin, epsGrMax
     );
-    const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
+    const reg = linearRegressionCooks(pts.map((p) => [p.x, p.y]));
     if (!reg) continue;
 
     totalSlope += reg.slope;
@@ -184,7 +184,7 @@ export function computeDeviationTimeSeries(
       data, type, di, activeTickers,
       revGrMin, revGrMax, epsGrMin, epsGrMax
     );
-    const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
+    const reg = linearRegressionCooks(pts.map((p) => [p.x, p.y]));
     if (!reg) {
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
@@ -290,7 +290,7 @@ export function computeSpotScore(
     data, type, dateIndex, activeTickers,
     revGrMin, revGrMax, epsGrMin, epsGrMax
   );
-  const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
+  const reg = linearRegressionCooks(pts.map((p) => [p.x, p.y]));
   if (!reg) return null;
 
   const gPct = g * 100;
@@ -376,7 +376,7 @@ export function computeHistoricalBaselineWeighted(
       data, type, di, activeTickers,
       revGrMin, revGrMax, epsGrMin, epsGrMax
     );
-    const reg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y]));
+    const reg = linearRegressionCooks(pts.map((p) => [p.x, p.y]));
     if (!reg || reg.r2 <= 0) continue;
 
     periods.push(reg);
@@ -433,20 +433,21 @@ export function computeAggregateComparison(
   epsGrMin: number | null,
   epsGrMax: number | null
 ): AggregateMethodResult[] {
-  const methods: RegressionMethodName[] = ['ols', 'trimmed', 'robust', 'logLinear'];
+  const methods: RegressionMethodName[] = ['ols', 'trimmed', 'cooks', 'robust', 'logLinear'];
   const labels: Record<RegressionMethodName, string> = {
     ols: 'OLS (Current)',
     trimmed: 'Residual Trimming',
+    cooks: "Cook's Distance",
     robust: 'Robust (Huber)',
     logLinear: 'Log-Linear',
   };
 
   // Collect per-period results for each method
   const buckets: Record<RegressionMethodName, ComparisonResult[]> = {
-    ols: [], trimmed: [], robust: [], logLinear: [],
+    ols: [], trimmed: [], cooks: [], robust: [], logLinear: [],
   };
   const winCounts: Record<RegressionMethodName, number> = {
-    ols: 0, trimmed: 0, robust: 0, logLinear: 0,
+    ols: 0, trimmed: 0, cooks: 0, robust: 0, logLinear: 0,
   };
 
   for (let di = 0; di < data.dates.length; di++) {

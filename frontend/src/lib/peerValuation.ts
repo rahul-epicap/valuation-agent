@@ -1,6 +1,6 @@
 import { DashboardData, MetricType, ScatterPoint } from './types';
 import { filterPoints } from './filters';
-import { linearRegressionTrimmed } from './regression';
+import { linearRegressionCooks } from './regression';
 
 /**
  * Get available index keys with ticker counts from dashboard data.
@@ -64,7 +64,7 @@ export function computePeerIndexRegressions(
 
     const pts = filterPoints(data, metric, dateIdx, indexTickers, null, null, null, null);
     const pairs = pts.map((p: ScatterPoint) => [p.x, p.y] as [number, number]);
-    const reg = linearRegressionTrimmed(pairs);
+    const reg = linearRegressionCooks(pairs);
 
     let implied: number | null = null;
     if (reg) {
