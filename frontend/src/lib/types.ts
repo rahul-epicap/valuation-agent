@@ -151,6 +151,7 @@ export interface IndexRegressionResult {
     metric_label: string;
     regression: RegressionResult | null;
     implied_multiple: number | null;
+    historical_implied_multiple: number | null;
     historical: {
       avg_slope: number;
       avg_intercept: number;
@@ -177,6 +178,7 @@ export interface PeerValuationResult {
   similar_tickers: PeerSearchResult[];
   index_regressions: IndexRegressionResult[];
   composite_valuation: CompositeValuation[];
+  historical_composite_valuation: CompositeValuation[];
   peer_stats: {
     metric_type: MetricType;
     metric_label: string;

@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["peer-valuation"])
 
 
+# ---------------------------------------------------------------------------
+# Request model
+# ---------------------------------------------------------------------------
 class PeerValuationRequest(BaseModel):
     ticker: str
     revenue_growth: float = Field(description="Decimal, e.g. 0.15 for 15%")
@@ -29,9 +32,83 @@ class PeerValuationRequest(BaseModel):
     dcf_discount_rate: float = 0.10
     dcf_terminal_growth: float = 0.0
     dcf_fade_period: int = 5
+    business_description: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Optional business description for similarity search when ticker lacks a stored description",
+    )
 
 
-@router.post("/valuation/peer-estimate")
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+class PeerSearchResultModel(BaseModel):
+    ticker: str
+    score: float
+    description: str
+
+
+class HistoricalBaseline(BaseModel):
+    avg_slope: float
+    avg_intercept: float
+    avg_r2: float
+    avg_n: float
+    period_count: int
+
+
+class PeerRegressionMetric(BaseModel):
+    metric_type: str
+    metric_label: str
+    regression: dict | None = None
+    implied_multiple: float | None = None
+    historical_implied_multiple: float | None = None
+    historical: HistoricalBaseline | None = None
+
+
+class PeerIndexRegression(BaseModel):
+    index_name: str
+    peer_count_in_index: int
+    total_index_tickers: int
+    avg_peer_similarity: float
+    regressions: list[PeerRegressionMetric]
+
+
+class PeerCompositeValuation(BaseModel):
+    metric_type: str
+    metric_label: str
+    weighted_implied_multiple: float | None = None
+    actual_multiple: float | None = None
+    deviation_pct: float | None = None
+    num_indices: int = 0
+
+
+class PeerDistributionStats(BaseModel):
+    metric_type: str
+    metric_label: str
+    count: int
+    mean: float | None = None
+    median: float | None = None
+    p25: float | None = None
+    p75: float | None = None
+    min: float | None = None
+    max: float | None = None
+    ticker_percentile: float | None = None
+
+
+class PeerValuationResponse(BaseModel):
+    ticker: str
+    industry: str | None = None
+    peer_count: int
+    similar_tickers: list[PeerSearchResultModel]
+    index_regressions: list[PeerIndexRegression]
+    composite_valuation: list[PeerCompositeValuation]
+    historical_composite_valuation: list[PeerCompositeValuation]
+    peer_stats: list[PeerDistributionStats]
+    dcf: dict | None = None
+    snapshot_id: int
+
+
+@router.post("/valuation/peer-estimate", response_model=PeerValuationResponse)
 async def peer_estimate(
     body: PeerValuationRequest,
     db: AsyncSession = Depends(get_db),
@@ -69,6 +146,7 @@ async def peer_estimate(
     try:
         similar = await similarity_service.find_similar(
             query_ticker=body.ticker,
+            query_text=body.business_description,
             db=db,
             top_k=body.top_k_peers,
         )
