@@ -167,7 +167,7 @@ export default function PeerValuationView({ data, state, dispatch }: PeerValuati
               Similar Companies ({result.peer_count} peers)
             </div>
             <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
-              {result.similar_tickers.slice(0, 12).map((peer: PeerSearchResult) => (
+              {result.similar_tickers.slice(0, 15).map((peer: PeerSearchResult) => (
                 <div
                   key={peer.ticker}
                   className="rounded p-2"

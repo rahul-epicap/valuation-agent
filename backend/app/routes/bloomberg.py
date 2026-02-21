@@ -183,6 +183,96 @@ async def fetch_expanded_bloomberg_data(
     }
 
 
+class BloombergBatchFetchRequest(BaseModel):
+    tickers: list[str]
+    snapshot_id: int | None = None
+    start_date: str = "2010-01-01"
+    end_date: str | None = None
+    name: str | None = None
+
+    _validate_dates = field_validator("start_date", "end_date")(_validate_date_str)
+
+
+@router.post("/bloomberg/fetch-batch")
+async def fetch_batch_for_tickers(
+    body: BloombergBatchFetchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch Bloomberg data for a specific set of tickers.
+
+    If snapshot_id is given, merges into that snapshot.
+    Otherwise creates a new snapshot.
+    """
+    service = _get_service()
+
+    # Convert short tickers to Bloomberg format
+    bbg_tickers = [
+        t if t.endswith(" Equity") else f"{t} US Equity" for t in body.tickers
+    ]
+
+    try:
+        batch_data = await service.fetch_for_tickers(
+            bbg_tickers,
+            start_date=body.start_date,
+            end_date=body.end_date,
+        )
+    except Exception as e:
+        logger.exception("Bloomberg batch fetch failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Bloomberg batch fetch failed: {e}",
+        ) from e
+
+    if body.snapshot_id:
+        # Merge into existing snapshot
+        from sqlalchemy import select
+
+        result = await db.execute(
+            select(Snapshot).where(Snapshot.id == body.snapshot_id)
+        )
+        snapshot = result.scalar_one_or_none()
+        if snapshot is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Snapshot {body.snapshot_id} not found",
+            )
+
+        merged = BloombergService._merge_dashboard_data(
+            snapshot.dashboard_data, batch_data
+        )
+        snapshot.dashboard_data = merged
+        snapshot.ticker_count = len(merged.get("tickers", []))
+        snapshot.date_count = len(merged.get("dates", []))
+        snapshot.industry_count = len(set(merged.get("industries", {}).values()))
+    else:
+        # Create new snapshot
+        name = body.name
+        if not name:
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+            name = f"Bloomberg Batch — {timestamp}"
+
+        snapshot = Snapshot(
+            name=name,
+            dashboard_data=batch_data,
+            source_filename="bloomberg-batch",
+            ticker_count=len(batch_data.get("tickers", [])),
+            date_count=len(batch_data.get("dates", [])),
+            industry_count=len(set(batch_data.get("industries", {}).values())),
+        )
+        db.add(snapshot)
+
+    await db.commit()
+    await db.refresh(snapshot)
+
+    return {
+        "id": snapshot.id,
+        "name": snapshot.name,
+        "ticker_count": snapshot.ticker_count,
+        "date_count": snapshot.date_count,
+        "industry_count": snapshot.industry_count,
+    }
+
+
 @router.post("/bloomberg/update")
 async def update_bloomberg_data(
     body: BloombergUpdateRequest | None = None,

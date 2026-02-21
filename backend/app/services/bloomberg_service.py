@@ -852,6 +852,103 @@ class BloombergService:
             self._tickers,
         )
 
+    async def fetch_for_tickers(
+        self,
+        tickers: list[str],
+        start_date: str = "2010-01-01",
+        end_date: str | None = None,
+    ) -> dict:
+        """Fetch BDH data for an explicit list of tickers.
+
+        Returns the same dashboard JSON schema as fetch_all().
+        """
+        if end_date is None:
+            end_date = date.today().strftime("%Y-%m-%d")
+
+        trail_start = self._shift_date_back(start_date, years=1)
+
+        logger.info(
+            "Fetching BDH data for %d tickers, %s to %s (WEEKLY)",
+            len(tickers),
+            start_date,
+            end_date,
+        )
+
+        (
+            ev_data,
+            fwd_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_rev_data,
+            trail_eps_data,
+            pe_data,
+            industries,
+        ) = await asyncio.gather(
+            self._fetch_bdh_metric(
+                "CURR_ENTP_VAL",
+                start_date,
+                end_date,
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_SALES",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_GROSS_MARGIN",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_EPS",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_NET_SALES",
+                trail_start,
+                end_date,
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_EPS",
+                trail_start,
+                end_date,
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_PE_RATIO",
+                start_date,
+                end_date,
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_industries(tickers=tickers),
+        )
+
+        return self._assemble_dashboard_json(
+            ev_data,
+            fwd_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_rev_data,
+            trail_eps_data,
+            pe_data,
+            industries,
+            tickers,
+        )
+
     async def fetch_expanded(
         self,
         start_date: str = "2010-01-01",

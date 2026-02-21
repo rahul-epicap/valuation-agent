@@ -193,6 +193,121 @@ async def refresh_memberships(
     return summary
 
 
+async def refresh_memberships_batch(
+    bloomberg: BloombergService,
+    db: AsyncSession,
+    short_names: list[str],
+    current_only: bool = True,
+    start_year: int = 2010,
+) -> dict[str, int]:
+    """Refresh memberships for a specific set of indices.
+
+    Args:
+        bloomberg: Bloomberg service instance.
+        db: Async database session.
+        short_names: List of index short_names to refresh.
+        current_only: If True, only fetch current members (no history).
+        start_year: Start year for historical refresh (ignored if current_only).
+
+    Returns {index_short_name: memberships_stored}.
+    """
+    summary: dict[str, int] = {}
+
+    for sn in short_names:
+        idx_result = await db.execute(select(Index).where(Index.short_name == sn))
+        idx = idx_result.scalar_one_or_none()
+        if idx is None:
+            logger.warning("Index '%s' not found in DB — skipping", sn)
+            summary[sn] = -1
+            continue
+
+        if current_only:
+            dates_to_fetch = [date.today()]
+        else:
+            dates_to_fetch = _generate_quarterly_dates(start_year)
+
+        count = 0
+        for qdate in dates_to_fetch:
+            date_str = qdate.strftime("%Y%m%d")
+            as_of = qdate.isoformat()
+
+            try:
+                df = await asyncio.to_thread(
+                    bloomberg._bds_sync,
+                    idx.bbg_ticker,
+                    "INDX_MWEIGHT_HIST",
+                    overrides=[("END_DATE_OVERRIDE", date_str)],
+                )
+            except Exception:
+                logger.debug(
+                    "BDS failed for %s at %s — skipping", idx.bbg_ticker, date_str
+                )
+                continue
+
+            if df.empty:
+                continue
+
+            ticker_col = None
+            weight_col = None
+            for col in df.columns:
+                col_lower = str(col).lower()
+                if "ticker" in col_lower or "member" in col_lower:
+                    ticker_col = col
+                elif "weight" in col_lower or "percent" in col_lower:
+                    weight_col = col
+
+            if ticker_col is None:
+                for col in df.columns:
+                    sample = df[col].iloc[0] if len(df) > 0 else None
+                    if isinstance(sample, str):
+                        ticker_col = col
+                        break
+
+            if ticker_col is None:
+                continue
+
+            for _, row in df.iterrows():
+                raw = row[ticker_col]
+                if raw is None or not str(raw).strip():
+                    continue
+                bbg = _normalize_ticker(str(raw))
+                if not bbg:
+                    continue
+                short = _clean_ticker(bbg)
+
+                weight = None
+                if weight_col is not None:
+                    try:
+                        weight = float(row[weight_col])
+                    except (ValueError, TypeError):
+                        pass
+
+                existing = await db.execute(
+                    select(IndexMembership).where(
+                        IndexMembership.index_id == idx.id,
+                        IndexMembership.ticker == short,
+                        IndexMembership.as_of_date == as_of,
+                    )
+                )
+                if existing.scalar_one_or_none() is None:
+                    db.add(
+                        IndexMembership(
+                            index_id=idx.id,
+                            ticker=short,
+                            bbg_ticker=bbg,
+                            as_of_date=as_of,
+                            weight=weight,
+                        )
+                    )
+                    count += 1
+
+        await db.commit()
+        summary[sn] = count
+        logger.info("Stored %d memberships for %s", count, sn)
+
+    return summary
+
+
 async def get_current_members(
     db: AsyncSession,
     index_short_name: str,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,6 +100,36 @@ async def refresh_index_memberships(
 
     summary = await index_service.refresh_memberships(_bbg_service, db, start_year)
     return {"status": "ok", "memberships_added": summary}
+
+
+class BatchRefreshRequest(BaseModel):
+    short_names: list[str]
+    current_only: bool = True
+
+
+@router.post("/indices/refresh-batch")
+async def refresh_batch(
+    body: BatchRefreshRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Refresh memberships for a specific batch of indices."""
+    if _bbg_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Bloomberg service unavailable.",
+        )
+
+    summary = await index_service.refresh_memberships_batch(
+        _bbg_service, db, body.short_names, body.current_only
+    )
+    return {"status": "ok", "memberships_added": summary}
+
+
+@router.post("/indices/seed")
+async def seed_indices_endpoint(db: AsyncSession = Depends(get_db)) -> dict:
+    """Re-seed indices from indices.json (adds new ones, updates existing)."""
+    result = await index_service.seed_indices(db)
+    return {"status": "ok", "indices_count": len(result)}
 
 
 @router.get("/indices/universe")
