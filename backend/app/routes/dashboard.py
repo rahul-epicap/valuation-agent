@@ -1,8 +1,9 @@
 import logging
 from collections import OrderedDict
 
+import orjson
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,10 +17,11 @@ router = APIRouter(tags=["dashboard"])
 
 # ---------------------------------------------------------------------------
 # In-memory response cache (capped at 5 snapshots).
+# Stores pre-serialized bytes to avoid re-serializing 200+ MB dicts on every hit.
 # Per-process: each uvicorn worker gets its own copy.
 # ---------------------------------------------------------------------------
 _MAX_CACHE = 5
-_cache: OrderedDict[int, dict] = OrderedDict()
+_cache: OrderedDict[int, bytes] = OrderedDict()
 _cache_version: int = 0
 _latest_snapshot_id: int | None = None
 
@@ -60,10 +62,50 @@ async def _enrich_with_indices(data: dict, db: AsyncSession) -> dict:
     return data
 
 
+def _compact_data(data: dict) -> dict:
+    """Round all fm numbers to 4dp and strip all-null tickers.
+
+    Applied once on cache miss so existing (unrounded) snapshots benefit
+    without requiring a re-upload.
+    """
+    fm = data.get("fm")
+    if not fm:
+        return data
+
+    metric_keys = ("er", "eg", "pe", "rg", "xg", "fe")
+    empty_tickers: list[str] = []
+
+    for ticker, metrics in fm.items():
+        all_null = True
+        for key in metric_keys:
+            arr = metrics.get(key)
+            if arr is None:
+                continue
+            for i, v in enumerate(arr):
+                if v is not None:
+                    all_null = False
+                    if isinstance(v, float):
+                        arr[i] = round(v, 4)
+            metrics[key] = arr
+        if all_null:
+            empty_tickers.append(ticker)
+
+    for t in empty_tickers:
+        del fm[t]
+
+    if empty_tickers:
+        data["tickers"] = [
+            t for t in data.get("tickers", []) if t not in set(empty_tickers)
+        ]
+        logger.info("Compacted: stripped %d all-null tickers", len(empty_tickers))
+
+    return data
+
+
 async def _get_enriched_data(
     snapshot_id: int | None, db: AsyncSession
-) -> tuple[int, dict]:
-    """Return (snapshot_id, enriched_data), using cache when available."""
+) -> tuple[int, bytes]:
+    """Return (snapshot_id, serialized_bytes), using cache when available."""
     sid = snapshot_id if snapshot_id is not None else await _resolve_latest_id(db)
 
     if sid in _cache:
@@ -81,22 +123,33 @@ async def _get_enriched_data(
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
     data = dict(snapshot.dashboard_data)
+    # Deep-copy fm so _compact_data's in-place mutations don't touch the ORM object
+    if "fm" in data:
+        data["fm"] = {
+            t: {k: list(v) for k, v in m.items()} for t, m in data["fm"].items()
+        }
     data = await _enrich_with_indices(data, db)
+    data = _compact_data(data)
 
-    _cache[sid] = data
+    serialized = orjson.dumps(data)
+
+    _cache[sid] = serialized
     if len(_cache) > _MAX_CACHE:
         _cache.popitem(last=False)
 
-    return sid, data
+    return sid, serialized
 
 
-def _make_cached_response(request: Request, data: dict, snapshot_id: int) -> Response:
+def _make_cached_response(
+    request: Request, serialized: bytes, snapshot_id: int
+) -> Response:
     """Return 304 if ETag matches, otherwise full JSON with cache headers."""
     etag = f'"{snapshot_id}-{_cache_version}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
-    return JSONResponse(
-        content=data,
+    return Response(
+        content=serialized,
+        media_type="application/json",
         headers={
             "ETag": etag,
             "Cache-Control": "no-cache",
@@ -142,8 +195,8 @@ async def get_latest_dashboard_data(
     db: AsyncSession = Depends(get_db),
 ):
     """Return the latest snapshot's dashboard_data JSON, enriched with index memberships."""
-    sid, data = await _get_enriched_data(None, db)
-    return _make_cached_response(request, data, sid)
+    sid, serialized = await _get_enriched_data(None, db)
+    return _make_cached_response(request, serialized, sid)
 
 
 @router.get("/dashboard-data/{snapshot_id}")
@@ -153,8 +206,8 @@ async def get_dashboard_data_by_id(
     db: AsyncSession = Depends(get_db),
 ):
     """Return a specific snapshot's dashboard_data by ID, enriched with index memberships."""
-    sid, data = await _get_enriched_data(snapshot_id, db)
-    return _make_cached_response(request, data, sid)
+    sid, serialized = await _get_enriched_data(snapshot_id, db)
+    return _make_cached_response(request, serialized, sid)
 
 
 class SnapshotImportRequest(BaseModel):

@@ -4,12 +4,12 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db import Base
 
@@ -20,7 +20,7 @@ class Snapshot(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    dashboard_data = Column(JSON, nullable=False)
+    dashboard_data = Column(JSONB, nullable=False)
     source_filename = Column(String(255))
     ticker_count = Column(Integer)
     date_count = Column(Integer)

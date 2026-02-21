@@ -78,12 +78,12 @@ def _safe_float(val: object) -> float | None:
     if isinstance(val, (int, float)):
         if math.isnan(val) or math.isinf(val):
             return None
-        return float(val)
+        return round(float(val), 4)
     try:
         f = float(val)
         if math.isnan(f) or math.isinf(f):
             return None
-        return f
+        return round(f, 4)
     except (ValueError, TypeError):
         return None
 
@@ -708,7 +708,7 @@ class BloombergService:
 
                 # EV / Forward Revenue
                 if ev is not None and fwd_rev is not None and fwd_rev != 0:
-                    er_vals.append(ev / fwd_rev)
+                    er_vals.append(round(ev / fwd_rev, 4))
                 else:
                     er_vals.append(None)
 
@@ -722,19 +722,19 @@ class BloombergService:
                     and fwd_rev != 0
                 ):
                     fwd_gp = gm / 100.0 * fwd_rev
-                    eg_vals.append(ev / fwd_gp)
+                    eg_vals.append(round(ev / fwd_gp, 4))
                 else:
                     eg_vals.append(None)
 
                 # Revenue Growth = BEST_SALES(BF) / TRAIL_12M_NET_SALES - 1
                 if fwd_rev is not None and trail_rev is not None and trail_rev != 0:
-                    rg_vals.append(fwd_rev / trail_rev - 1.0)
+                    rg_vals.append(round(fwd_rev / trail_rev - 1.0, 4))
                 else:
                     rg_vals.append(None)
 
                 # EPS Growth = BEST_EPS(BF) / TRAIL_12M_EPS - 1
                 if fwd_eps is not None and trail_eps is not None and trail_eps != 0:
-                    xg_vals.append(fwd_eps / trail_eps - 1.0)
+                    xg_vals.append(round(fwd_eps / trail_eps - 1.0, 4))
                 else:
                     xg_vals.append(None)
 

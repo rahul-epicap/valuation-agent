@@ -104,7 +104,7 @@ def _clean_value(val: Any) -> float | None:
     if isinstance(val, (int, float)):
         if math.isnan(val) or math.isinf(val):
             return None
-        return float(val)
+        return round(float(val), 4)
     s = str(val).strip()
     if s in _NULL_STRINGS:
         return None
@@ -112,7 +112,7 @@ def _clean_value(val: Any) -> float | None:
         f = float(s)
         if math.isnan(f) or math.isinf(f):
             return None
-        return f
+        return round(f, 4)
     except (ValueError, TypeError):
         return None
 
@@ -349,6 +349,19 @@ def parse_excel(file_content: bytes) -> dict:
                     if unified_idx is not None:
                         values[unified_idx] = ticker_values[i]
             fm[ticker][metric_key] = values
+
+    # --- Strip tickers where every metric is entirely null ---
+    empty_tickers = [
+        t
+        for t in all_tickers
+        if all(v is None for key in ALL_METRIC_KEYS for v in fm[t][key])
+    ]
+    for t in empty_tickers:
+        del fm[t]
+    all_tickers = [t for t in all_tickers if t not in set(empty_tickers)]
+
+    if empty_tickers:
+        logger.info("Stripped %d all-null tickers", len(empty_tickers))
 
     # --- Build output ---
     result = {
