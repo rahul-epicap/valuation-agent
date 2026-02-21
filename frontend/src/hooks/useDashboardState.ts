@@ -1,9 +1,11 @@
 'use client';
 
 import { useReducer, useMemo } from 'react';
-import { DashboardData, MetricType } from '../lib/types';
+import { DashboardData, MetricType, PeerSearchResult, PeerValuationResult } from '../lib/types';
 
-export type ViewMode = 'charts' | 'regression' | 'dcf';
+export type ViewMode = 'charts' | 'regression' | 'dcf' | 'peers';
+
+export type IndexFilterMode = 'off' | 'on';
 
 export interface DashboardState {
   view: ViewMode;
@@ -26,9 +28,22 @@ export interface DashboardState {
   dcfTerminalGrowth: number;
   dcfProjectionYears: number;
   dcfFadePeriod: number;
+  // Index filtering
+  idxOn: Set<string>;
+  idxFilterMode: IndexFilterMode;
+  // Peer search
+  peerQuery: string;
+  peerResults: PeerSearchResult[];
+  peerLoading: boolean;
+  peerError: string | null;
+  // Peer valuation
+  peerValTicker: string | null;
+  peerValResults: PeerValuationResult | null;
+  peerValLoading: boolean;
+  peerValError: string | null;
 }
 
-type Action =
+export type Action =
   | { type: 'SET_VIEW'; payload: ViewMode }
   | { type: 'SET_REG'; payload: MetricType }
   | { type: 'SET_MUL'; payload: MetricType }
@@ -53,7 +68,19 @@ type Action =
   | { type: 'SET_DCF_DISCOUNT_RATE'; payload: number }
   | { type: 'SET_DCF_TERMINAL_GROWTH'; payload: number }
   | { type: 'SET_DCF_PROJECTION_YEARS'; payload: number }
-  | { type: 'SET_DCF_FADE_PERIOD'; payload: number };
+  | { type: 'SET_DCF_FADE_PERIOD'; payload: number }
+  | { type: 'TOGGLE_INDEX'; payload: string }
+  | { type: 'SELECT_ALL_INDICES'; payload: string[] }
+  | { type: 'CLEAR_ALL_INDICES' }
+  | { type: 'SET_INDEX_FILTER_MODE'; payload: IndexFilterMode }
+  | { type: 'SET_PEER_QUERY'; payload: string }
+  | { type: 'SET_PEER_RESULTS'; payload: PeerSearchResult[] }
+  | { type: 'SET_PEER_LOADING'; payload: boolean }
+  | { type: 'SET_PEER_ERROR'; payload: string | null }
+  | { type: 'SET_PEER_VAL_TICKER'; payload: string | null }
+  | { type: 'SET_PEER_VAL_RESULTS'; payload: PeerValuationResult | null }
+  | { type: 'SET_PEER_VAL_LOADING'; payload: boolean }
+  | { type: 'SET_PEER_VAL_ERROR'; payload: string | null };
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -131,6 +158,34 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, dcfProjectionYears: action.payload };
     case 'SET_DCF_FADE_PERIOD':
       return { ...state, dcfFadePeriod: action.payload };
+    case 'TOGGLE_INDEX': {
+      const next = new Set(state.idxOn);
+      if (next.has(action.payload)) next.delete(action.payload);
+      else next.add(action.payload);
+      return { ...state, idxOn: next };
+    }
+    case 'SELECT_ALL_INDICES':
+      return { ...state, idxOn: new Set(action.payload) };
+    case 'CLEAR_ALL_INDICES':
+      return { ...state, idxOn: new Set() };
+    case 'SET_INDEX_FILTER_MODE':
+      return { ...state, idxFilterMode: action.payload };
+    case 'SET_PEER_QUERY':
+      return { ...state, peerQuery: action.payload };
+    case 'SET_PEER_RESULTS':
+      return { ...state, peerResults: action.payload };
+    case 'SET_PEER_LOADING':
+      return { ...state, peerLoading: action.payload };
+    case 'SET_PEER_ERROR':
+      return { ...state, peerError: action.payload };
+    case 'SET_PEER_VAL_TICKER':
+      return { ...state, peerValTicker: action.payload };
+    case 'SET_PEER_VAL_RESULTS':
+      return { ...state, peerValResults: action.payload };
+    case 'SET_PEER_VAL_LOADING':
+      return { ...state, peerValLoading: action.payload };
+    case 'SET_PEER_VAL_ERROR':
+      return { ...state, peerValError: action.payload };
     default:
       return state;
   }
@@ -138,6 +193,9 @@ function reducer(state: DashboardState, action: Action): DashboardState {
 
 export function createInitialState(data: DashboardData): DashboardState {
   const allIndustries = [...new Set(Object.values(data.industries))].sort();
+  const allIndices = data.indices
+    ? [...new Set(Object.values(data.indices).flat())].sort()
+    : [];
   return {
     view: 'charts',
     reg: 'evRev',
@@ -159,6 +217,16 @@ export function createInitialState(data: DashboardData): DashboardState {
     dcfTerminalGrowth: 0.03,
     dcfProjectionYears: 10,
     dcfFadePeriod: 5,
+    idxOn: new Set(allIndices),
+    idxFilterMode: 'off',
+    peerQuery: '',
+    peerResults: [],
+    peerLoading: false,
+    peerError: null,
+    peerValTicker: null,
+    peerValResults: null,
+    peerValLoading: false,
+    peerValError: null,
   };
 }
 
@@ -171,5 +239,12 @@ export function useDashboardState(data: DashboardData) {
     [data]
   );
 
-  return { state, dispatch, allIndustries };
+  const allIndices = useMemo(
+    () => data.indices
+      ? [...new Set(Object.values(data.indices).flat())].sort()
+      : [],
+    [data]
+  );
+
+  return { state, dispatch, allIndustries, allIndices };
 }

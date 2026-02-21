@@ -11,6 +11,15 @@ _DEFAULT_DB = "sqlite+aiosqlite:///" + str(
 class Settings(BaseSettings):
     DATABASE_URL: str = _DEFAULT_DB
 
+    # TurboPuffer vector search
+    TURBOPUFFER_API_KEY: str = ""
+    TURBOPUFFER_NAMESPACE: str = "valuation-descriptions"
+    TURBOPUFFER_REGION: str = "aws-us-west-2"
+
+    # Voyage AI embeddings
+    VOYAGEAI_API_KEY: str = ""
+    VOYAGEAI_MODEL: str = "voyage-3"
+
     @property
     def sync_database_url(self) -> str:
         """Return a synchronous database URL derived from the async one."""

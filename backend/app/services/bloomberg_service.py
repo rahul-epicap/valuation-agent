@@ -115,6 +115,52 @@ class BloombergService:
     def tickers(self) -> list[str]:
         return list(self._tickers)
 
+    def set_ticker_universe(self, tickers: list[str]) -> None:
+        """Override the internal ticker list with a custom universe."""
+        self._tickers = list(tickers)
+        logger.info("Ticker universe overridden: %d tickers", len(self._tickers))
+
+    async def fetch_descriptions_bds(
+        self,
+        tickers: list[str] | None = None,
+        field: str = "CIE_DES_BULK",
+    ) -> dict[str, str]:
+        """Fetch business descriptions via BDS for each ticker.
+
+        Falls back to LONG_COMP_DESC_BULK if the primary field returns empty.
+        Returns {bbg_ticker: description_text}.
+        """
+        ticker_universe = tickers or self._tickers
+        result: dict[str, str] = {}
+        fallback_field = "LONG_COMP_DESC_BULK"
+
+        for bbg_ticker in ticker_universe:
+            for f in (field, fallback_field):
+                try:
+                    df = await asyncio.to_thread(self._bds_sync, bbg_ticker, f)
+                except Exception:
+                    continue
+
+                if df.empty:
+                    continue
+
+                text_parts: list[str] = []
+                for col in df.columns:
+                    for val in df[col]:
+                        if val is not None and str(val).strip():
+                            text_parts.append(str(val).strip())
+
+                if text_parts:
+                    result[bbg_ticker] = " ".join(text_parts)
+                    break
+
+        logger.info(
+            "Fetched descriptions for %d / %d tickers",
+            len(result),
+            len(ticker_universe),
+        )
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -201,6 +247,9 @@ class BloombergService:
             field=field,
             overrides=overrides or [],
         )
+
+    # Public alias for external callers (services should use this)
+    bds_sync = _bds_sync
 
     @staticmethod
     def _batches(items: list[str], size: int) -> list[list[str]]:
@@ -804,6 +853,103 @@ class BloombergService:
             pe_data,
             industries,
             self._tickers,
+        )
+
+    async def fetch_for_tickers(
+        self,
+        tickers: list[str],
+        start_date: str = "2010-01-01",
+        end_date: str | None = None,
+    ) -> dict:
+        """Fetch BDH data for an explicit list of tickers.
+
+        Returns the same dashboard JSON schema as fetch_all().
+        """
+        if end_date is None:
+            end_date = date.today().strftime("%Y-%m-%d")
+
+        trail_start = self._shift_date_back(start_date, years=1)
+
+        logger.info(
+            "Fetching BDH data for %d tickers, %s to %s (WEEKLY)",
+            len(tickers),
+            start_date,
+            end_date,
+        )
+
+        (
+            ev_data,
+            fwd_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_rev_data,
+            trail_eps_data,
+            pe_data,
+            industries,
+        ) = await asyncio.gather(
+            self._fetch_bdh_metric(
+                "CURR_ENTP_VAL",
+                start_date,
+                end_date,
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_SALES",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_GROSS_MARGIN",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_EPS",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_NET_SALES",
+                trail_start,
+                end_date,
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_EPS",
+                trail_start,
+                end_date,
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "BEST_PE_RATIO",
+                start_date,
+                end_date,
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_industries(tickers=tickers),
+        )
+
+        return self._assemble_dashboard_json(
+            ev_data,
+            fwd_rev_data,
+            gross_margin_data,
+            fwd_eps_data,
+            trail_rev_data,
+            trail_eps_data,
+            pe_data,
+            industries,
+            tickers,
         )
 
     async def fetch_expanded(

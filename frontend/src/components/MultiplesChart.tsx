@@ -34,8 +34,8 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
   const mk = MULTIPLE_KEYS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn),
-    [data, state.exTk, state.indOn]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
+    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
   );
 
   const { avgs, q75s } = useMemo(() => {
