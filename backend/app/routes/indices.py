@@ -105,6 +105,7 @@ async def refresh_index_memberships(
 class BatchRefreshRequest(BaseModel):
     short_names: list[str]
     current_only: bool = True
+    start_year: int = 2010
 
 
 @router.post("/indices/refresh-batch")
@@ -120,7 +121,7 @@ async def refresh_batch(
         )
 
     summary = await index_service.refresh_memberships_batch(
-        _bbg_service, db, body.short_names, body.current_only
+        _bbg_service, db, body.short_names, body.current_only, body.start_year
     )
     return {"status": "ok", "memberships_added": summary}
 
