@@ -200,14 +200,18 @@ async def _fetch_and_upsert_memberships(
                 overrides=[("END_DATE_OVERRIDE", date_str)],
             )
         except Exception:
-            logger.warning("BDS failed for %s at %s", idx.bbg_ticker, date_str, exc_info=True)
+            logger.warning(
+                "BDS failed for %s at %s", idx.bbg_ticker, date_str, exc_info=True
+            )
             continue
 
         if df.empty:
             logger.debug("BDS returned empty for %s at %s", idx.bbg_ticker, date_str)
             continue
 
-        logger.info("BDS returned %d rows for %s at %s", len(df), idx.bbg_ticker, date_str)
+        logger.info(
+            "BDS returned %d rows for %s at %s", len(df), idx.bbg_ticker, date_str
+        )
         members = _parse_membership_df(df)
         count += await _upsert_memberships(db, idx.id, as_of, members)
 

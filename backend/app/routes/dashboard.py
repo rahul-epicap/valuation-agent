@@ -1,6 +1,8 @@
 import logging
+from collections import OrderedDict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,91 @@ from app.models import Snapshot
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["dashboard"])
+
+# ---------------------------------------------------------------------------
+# In-memory response cache (capped at 5 snapshots)
+# ---------------------------------------------------------------------------
+_MAX_CACHE = 5
+_cache: OrderedDict[int, dict] = OrderedDict()
+_latest_snapshot_id: int | None = None
+
+
+def invalidate_cache() -> None:
+    """Clear the latest-snapshot pointer so next request re-resolves it."""
+    global _latest_snapshot_id
+    _latest_snapshot_id = None
+
+
+async def _resolve_latest_id(db: AsyncSession) -> int:
+    """Return the latest snapshot ID, using a lightweight query."""
+    global _latest_snapshot_id
+    if _latest_snapshot_id is not None:
+        return _latest_snapshot_id
+    result = await db.execute(
+        select(Snapshot.id).order_by(Snapshot.created_at.desc()).limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No snapshots found")
+    _latest_snapshot_id = row
+    return row
+
+
+async def _enrich_with_indices(data: dict, db: AsyncSession) -> dict:
+    """Enrich dashboard data with current index memberships."""
+    from app.services.index_service import build_indices_map
+
+    try:
+        indices_map = await build_indices_map(db)
+        if indices_map:
+            data["indices"] = indices_map
+    except Exception:
+        logger.debug("Could not enrich with index data", exc_info=True)
+    return data
+
+
+async def _get_enriched_data(
+    snapshot_id: int | None, db: AsyncSession
+) -> tuple[int, dict]:
+    """Return (snapshot_id, enriched_data), using cache when available."""
+    sid = snapshot_id if snapshot_id is not None else await _resolve_latest_id(db)
+
+    if sid in _cache:
+        _cache.move_to_end(sid)
+        return sid, _cache[sid]
+
+    if snapshot_id is not None:
+        result = await db.execute(select(Snapshot).where(Snapshot.id == sid))
+    else:
+        result = await db.execute(
+            select(Snapshot).order_by(Snapshot.created_at.desc()).limit(1)
+        )
+    snapshot = result.scalar_one_or_none()
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    data = dict(snapshot.dashboard_data)
+    data = await _enrich_with_indices(data, db)
+
+    _cache[sid] = data
+    if len(_cache) > _MAX_CACHE:
+        _cache.popitem(last=False)
+
+    return sid, data
+
+
+def _make_cached_response(request: Request, data: dict, snapshot_id: int) -> Response:
+    """Return 304 if ETag matches, otherwise full JSON with cache headers."""
+    etag = f'"{snapshot_id}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(
+        content=data,
+        headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=300",
+        },
+    )
 
 
 @router.get("/snapshots")
@@ -45,43 +132,25 @@ async def list_snapshots(db: AsyncSession = Depends(get_db)):
     ]
 
 
-async def _enrich_with_indices(data: dict, db: AsyncSession) -> dict:
-    """Enrich dashboard data with current index memberships."""
-    from app.services.index_service import build_indices_map
-
-    try:
-        indices_map = await build_indices_map(db)
-        if indices_map:
-            data["indices"] = indices_map
-    except Exception:
-        logger.debug("Could not enrich with index data", exc_info=True)
-    return data
-
-
 @router.get("/dashboard-data")
-async def get_latest_dashboard_data(db: AsyncSession = Depends(get_db)):
+async def get_latest_dashboard_data(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """Return the latest snapshot's dashboard_data JSON, enriched with index memberships."""
-    result = await db.execute(
-        select(Snapshot).order_by(Snapshot.created_at.desc()).limit(1)
-    )
-    snapshot = result.scalar_one_or_none()
-    if snapshot is None:
-        raise HTTPException(status_code=404, detail="No snapshots found")
-    data = dict(snapshot.dashboard_data)
-    return await _enrich_with_indices(data, db)
+    sid, data = await _get_enriched_data(None, db)
+    return _make_cached_response(request, data, sid)
 
 
 @router.get("/dashboard-data/{snapshot_id}")
 async def get_dashboard_data_by_id(
-    snapshot_id: int, db: AsyncSession = Depends(get_db)
+    snapshot_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
 ):
     """Return a specific snapshot's dashboard_data by ID, enriched with index memberships."""
-    result = await db.execute(select(Snapshot).where(Snapshot.id == snapshot_id))
-    snapshot = result.scalar_one_or_none()
-    if snapshot is None:
-        raise HTTPException(status_code=404, detail="Snapshot not found")
-    data = dict(snapshot.dashboard_data)
-    return await _enrich_with_indices(data, db)
+    sid, data = await _get_enriched_data(snapshot_id, db)
+    return _make_cached_response(request, data, sid)
 
 
 class SnapshotImportRequest(BaseModel):
@@ -124,6 +193,8 @@ async def import_snapshot(
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)
+
+    invalidate_cache()
 
     logger.info(
         "Imported snapshot id=%d: %d tickers, %d dates, %d industries",

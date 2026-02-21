@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.db import Base, engine, AsyncSessionLocal
 from app.routes import (
@@ -74,6 +75,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip compression — shrinks ~20 MB dashboard JSON to ~2-4 MB
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API routers
 app.include_router(upload.router, prefix="/api")

@@ -40,7 +40,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
 
   const intercepts = useMemo(() => {
     const result: (number | null)[] = [];
-    for (let di = 0; di < data.dates.length; di++) {
+    for (let di = startDi; di <= endDi; di++) {
       const pts = filterPoints(data, type, di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax);
       if (pts.length < 5) {
         result.push(null);
@@ -50,12 +50,10 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
       result.push(rg ? +rg.intercept.toFixed(6) : null);
     }
     return result;
-  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
-
-  const slicedIntercepts = useMemo(() => intercepts.slice(startDi, endDi + 1), [intercepts, startDi, endDi]);
+  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, startDi, endDi]);
 
   const percentileDatasets = useMemo(() => {
-    const valid = slicedIntercepts.filter((v): v is number => v != null);
+    const valid = intercepts.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
@@ -97,7 +95,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
         order: 4,
       },
     ];
-  }, [slicedIntercepts, startDi, endDi]);
+  }, [intercepts, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -147,7 +145,7 @@ export default function InterceptChart({ data, state, dispatch, startDi, endDi, 
   const datasets = [
     {
       label: 'Intercept',
-      data: slicedIntercepts,
+      data: intercepts,
       borderColor: col.m,
       backgroundColor: col.b,
       fill: { target: 'origin', above: col.m + '12' },
