@@ -772,9 +772,9 @@ def compute_peer_valuation(
         mk = MULTIPLE_KEYS[mt]
         actual: float | None = None
         if ticker in data["fm"]:
-            val = data["fm"][ticker][mk][latest_di]
-            if val is not None:
-                actual = float(val)
+            vals = data["fm"][ticker].get(mk, [])
+            if latest_di < len(vals) and vals[latest_di] is not None:
+                actual = float(vals[latest_di])
 
         # Spot composite
         predictions = composite_predictions[mt]

@@ -34,6 +34,7 @@ class PeerValuationRequest(BaseModel):
     dcf_fade_period: int = 5
     business_description: str | None = Field(
         default=None,
+        max_length=2000,
         description="Optional business description for similarity search when ticker lacks a stored description",
     )
 

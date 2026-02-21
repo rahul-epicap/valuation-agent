@@ -284,7 +284,13 @@ function IndexRegressionsCard({ regressions }: { regressions: IndexRegressionRes
 }
 
 
-function CompositeValuationCard({ ticker, items, historicalItems }: { ticker: string; items: CompositeValuation[]; historicalItems?: CompositeValuation[] }) {
+interface CompositeValuationCardProps {
+  ticker: string;
+  items: CompositeValuation[];
+  historicalItems?: CompositeValuation[];
+}
+
+function CompositeValuationCard({ ticker, items, historicalItems }: CompositeValuationCardProps) {
   const histMap = new Map(historicalItems?.map((h) => [h.metric_type, h]));
 
   return (
@@ -316,10 +322,10 @@ function CompositeValuationCard({ ticker, items, historicalItems }: { ticker: st
                       )}
                     </span>
                   )}
-                  {hist?.weighted_implied_multiple !== null && hist?.weighted_implied_multiple !== undefined && (
+                  {hist?.weighted_implied_multiple != null && (
                     <span className="block mt-1" style={{ fontSize: '9px', color: 'var(--t3)', fontFamily: "'JetBrains Mono', monospace" }}>
                       Hist: {hist.weighted_implied_multiple.toFixed(2)}x
-                      {hist.deviation_pct !== null && (
+                      {hist.deviation_pct != null && (
                         <span style={{ color: hist.deviation_pct > 0 ? '#ef4444' : '#10b981', marginLeft: '4px' }}>
                           ({hist.deviation_pct > 0 ? '+' : ''}{hist.deviation_pct.toFixed(1)}%)
                         </span>
