@@ -24,6 +24,11 @@ export interface RegressionResult {
   n: number;
 }
 
+export interface CooksRegressionResult extends RegressionResult {
+  nOriginal: number;
+  removedIndices: number[];
+}
+
 export type RegressionMethodName = 'ols' | 'trimmed' | 'cooks' | 'robust' | 'logLinear';
 
 export interface ComparisonResult {

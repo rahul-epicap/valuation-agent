@@ -6,21 +6,23 @@ interface RegressionStatsProps {
   regression: RegressionResult | null;
   date: string;
   metricType: MetricType;
+  nRemoved?: number;
   activeIndexNames?: string[];
 }
 
-export default function RegressionStats({ regression, date, metricType, activeIndexNames }: RegressionStatsProps) {
+export default function RegressionStats({ regression, date, metricType, nRemoved, activeIndexNames }: RegressionStatsProps) {
   const color = COLORS[metricType].m;
   const sl = regression?.slope ?? 0;
   const ic = regression?.intercept ?? 0;
   const r2 = regression?.r2 ?? 0;
   const n = regression?.n ?? 0;
+  const pointsLabel = nRemoved && nRemoved > 0 ? `${n} (−${nRemoved})` : String(n);
 
   const stats = [
     ['R\u00B2', r2.toFixed(3)],
     ['Slope', sl.toFixed(3)],
     ['Intercept', ic.toFixed(2)],
-    ['Points', String(n)],
+    ['Points', pointsLabel],
     ['Date', date],
   ];
 
