@@ -11,6 +11,13 @@ _DEFAULT_DB = "sqlite+aiosqlite:///" + str(
 class Settings(BaseSettings):
     DATABASE_URL: str = _DEFAULT_DB
 
+    def model_post_init(self, __context: object) -> None:
+        # Railway provides postgresql:// URLs; convert to asyncpg driver
+        if self.DATABASE_URL.startswith("postgresql://"):
+            self.DATABASE_URL = self.DATABASE_URL.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
+
     # TurboPuffer vector search
     TURBOPUFFER_API_KEY: str = ""
     TURBOPUFFER_NAMESPACE: str = "valuation-descriptions"

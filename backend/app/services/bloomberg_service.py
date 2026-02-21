@@ -37,7 +37,13 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-from blp import blp
+
+try:
+    from blp import blp
+
+    _HAS_BLP = True
+except ImportError:
+    _HAS_BLP = False
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +92,8 @@ class BloombergService:
     """Wraps the blp library to fetch Bloomberg data and produce dashboard JSON."""
 
     def __init__(self) -> None:
+        if not _HAS_BLP:
+            raise RuntimeError("blp package is not installed — Bloomberg features unavailable")
         self._bquery: blp.BlpQuery | None = None
         self._tickers: list[str] = []
         self._load_tickers()
