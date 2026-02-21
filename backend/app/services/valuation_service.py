@@ -688,6 +688,9 @@ def compute_peer_valuation(
     composite_predictions: dict[str, list[tuple[float, float]]] = {
         mt: [] for mt in metric_types
     }
+    historical_composite_predictions: dict[str, list[tuple[float, float]]] = {
+        mt: [] for mt in metric_types
+    }
 
     for idx_name, idx_peers in index_peer_groups.items():
         idx_tickers = index_all_tickers.get(idx_name, [])
@@ -711,6 +714,7 @@ def compute_peer_valuation(
                         "metric_label": METRIC_LABELS[mt],
                         "regression": None,
                         "implied_multiple": None,
+                        "historical_implied_multiple": None,
                     }
                 )
                 continue
@@ -718,6 +722,21 @@ def compute_peer_valuation(
             spot = reg_result["spot"]
             implied = spot["slope"] * growth_pct + spot["intercept"]
             r2 = spot["r2"]
+
+            # Historical implied multiple
+            hist = reg_result.get("historical")
+            historical_implied: float | None = None
+            if hist:
+                historical_implied = (
+                    hist["avg_slope"] * growth_pct + hist["avg_intercept"]
+                )
+                # Accumulate for historical composite
+                hist_r2 = hist.get("avg_r2", 0)
+                hist_weight = avg_peer_score * hist_r2
+                if hist_weight > 0 and historical_implied > 0:
+                    historical_composite_predictions[mt].append(
+                        (historical_implied, hist_weight)
+                    )
 
             # Weight = similarity * R²
             weight = avg_peer_score * r2
@@ -730,6 +749,7 @@ def compute_peer_valuation(
                     "metric_label": METRIC_LABELS[mt],
                     "regression": spot,
                     "implied_multiple": implied,
+                    "historical_implied_multiple": historical_implied,
                     "historical": reg_result.get("historical"),
                 }
             )
@@ -744,9 +764,19 @@ def compute_peer_valuation(
             }
         )
 
-    # Compute weighted composite implied multiples
+    # Compute weighted composite implied multiples (spot + historical)
     composite: list[dict] = []
+    historical_composite: list[dict] = []
     for mt in metric_types:
+        # Get actual multiple for deviation
+        mk = MULTIPLE_KEYS[mt]
+        actual: float | None = None
+        if ticker in data["fm"]:
+            val = data["fm"][ticker][mk][latest_di]
+            if val is not None:
+                actual = float(val)
+
+        # Spot composite
         predictions = composite_predictions[mt]
         if not predictions:
             composite.append(
@@ -757,34 +787,64 @@ def compute_peer_valuation(
                     "num_indices": 0,
                 }
             )
-            continue
+        else:
+            total_weight = sum(w for _, w in predictions)
+            weighted_sum = sum(v * w for v, w in predictions)
+            weighted_avg = weighted_sum / total_weight if total_weight > 0 else None
 
-        total_weight = sum(w for _, w in predictions)
-        weighted_sum = sum(v * w for v, w in predictions)
-        weighted_avg = weighted_sum / total_weight if total_weight > 0 else None
+            deviation: float | None = None
+            if actual is not None and weighted_avg is not None and weighted_avg > 0:
+                deviation = ((actual - weighted_avg) / weighted_avg) * 100
 
-        # Get actual multiple for deviation
-        mk = MULTIPLE_KEYS[mt]
-        actual: float | None = None
-        if ticker in data["fm"]:
-            val = data["fm"][ticker][mk][latest_di]
-            if val is not None:
-                actual = float(val)
+            composite.append(
+                {
+                    "metric_type": mt,
+                    "metric_label": METRIC_LABELS[mt],
+                    "weighted_implied_multiple": weighted_avg,
+                    "actual_multiple": actual,
+                    "deviation_pct": deviation,
+                    "num_indices": len(predictions),
+                }
+            )
 
-        deviation: float | None = None
-        if actual is not None and weighted_avg is not None and weighted_avg > 0:
-            deviation = ((actual - weighted_avg) / weighted_avg) * 100
+        # Historical composite
+        hist_preds = historical_composite_predictions[mt]
+        if not hist_preds:
+            historical_composite.append(
+                {
+                    "metric_type": mt,
+                    "metric_label": METRIC_LABELS[mt],
+                    "weighted_implied_multiple": None,
+                    "num_indices": 0,
+                }
+            )
+        else:
+            hist_total_w = sum(w for _, w in hist_preds)
+            hist_weighted_sum = sum(v * w for v, w in hist_preds)
+            hist_weighted_avg = (
+                hist_weighted_sum / hist_total_w if hist_total_w > 0 else None
+            )
 
-        composite.append(
-            {
-                "metric_type": mt,
-                "metric_label": METRIC_LABELS[mt],
-                "weighted_implied_multiple": weighted_avg,
-                "actual_multiple": actual,
-                "deviation_pct": deviation,
-                "num_indices": len(predictions),
-            }
-        )
+            hist_deviation: float | None = None
+            if (
+                actual is not None
+                and hist_weighted_avg is not None
+                and hist_weighted_avg > 0
+            ):
+                hist_deviation = (
+                    (actual - hist_weighted_avg) / hist_weighted_avg
+                ) * 100
+
+            historical_composite.append(
+                {
+                    "metric_type": mt,
+                    "metric_label": METRIC_LABELS[mt],
+                    "weighted_implied_multiple": hist_weighted_avg,
+                    "actual_multiple": actual,
+                    "deviation_pct": hist_deviation,
+                    "num_indices": len(hist_preds),
+                }
+            )
 
     # Peer stats on just the similar-stock subset
     peer_stats: list[dict] = []
@@ -819,6 +879,7 @@ def compute_peer_valuation(
         "similar_tickers": similar_tickers,
         "index_regressions": index_regression_results,
         "composite_valuation": composite,
+        "historical_composite_valuation": historical_composite,
         "peer_stats": peer_stats,
         "dcf": dcf_result,
     }

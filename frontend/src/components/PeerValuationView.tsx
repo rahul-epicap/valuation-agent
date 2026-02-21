@@ -179,7 +179,7 @@ export default function PeerValuationView({ data, state, dispatch }: PeerValuati
           {result.index_regressions.length > 0 && (
             <IndexRegressionsCard regressions={result.index_regressions} />
           )}
-          <CompositeValuationCard ticker={result.ticker} items={result.composite_valuation} />
+          <CompositeValuationCard ticker={result.ticker} items={result.composite_valuation} historicalItems={result.historical_composite_valuation} />
           <PeerStatsCard stats={result.peer_stats} />
         </div>
       )}
@@ -249,15 +249,29 @@ function IndexRegressionsCard({ regressions }: { regressions: IndexRegressionRes
                 <div key={reg.metric_type} className="mb-1.5">
                   <div className="flex items-center justify-between">
                     <span style={{ fontSize: '9.5px', color: 'var(--t2)' }}>{reg.metric_label}</span>
-                    {reg.implied_multiple !== null && (
-                      <span className="font-bold" style={{ fontSize: '11px', color: col?.m ?? 'var(--t1)', fontFamily: "'JetBrains Mono', monospace" }}>
-                        {reg.implied_multiple.toFixed(2)}x
-                      </span>
-                    )}
+                    <div className="text-right">
+                      {reg.implied_multiple !== null && (
+                        <span className="font-bold" style={{ fontSize: '11px', color: col?.m ?? 'var(--t1)', fontFamily: "'JetBrains Mono', monospace" }}>
+                          {reg.implied_multiple.toFixed(2)}x
+                        </span>
+                      )}
+                      {reg.historical_implied_multiple !== null && (
+                        <span className="ml-2" style={{ fontSize: '9px', color: 'var(--t3)', fontFamily: "'JetBrains Mono', monospace" }}>
+                          hist {reg.historical_implied_multiple.toFixed(2)}x
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex gap-3 mt-0.5" style={{ fontSize: '8.5px', color: 'var(--t3)', fontFamily: "'JetBrains Mono', monospace" }}>
                     <span>R²={reg.regression.r2.toFixed(3)}</span>
                     <span>n={reg.regression.n}</span>
+                    {reg.historical && (
+                      <>
+                        <span style={{ color: 'var(--t3)', opacity: 0.7 }}>|</span>
+                        <span>hist R²={reg.historical.avg_r2.toFixed(3)}</span>
+                        <span>{reg.historical.period_count}p</span>
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -270,7 +284,9 @@ function IndexRegressionsCard({ regressions }: { regressions: IndexRegressionRes
 }
 
 
-function CompositeValuationCard({ ticker, items }: { ticker: string; items: CompositeValuation[] }) {
+function CompositeValuationCard({ ticker, items, historicalItems }: { ticker: string; items: CompositeValuation[]; historicalItems?: CompositeValuation[] }) {
+  const histMap = new Map(historicalItems?.map((h) => [h.metric_type, h]));
+
   return (
     <div className="rounded-xl p-4" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
       <div className="font-bold uppercase mb-2" style={{ fontSize: '9.5px', color: 'var(--t3)', letterSpacing: '1px' }}>
@@ -279,6 +295,7 @@ function CompositeValuationCard({ ticker, items }: { ticker: string; items: Comp
       <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         {items.map((cv) => {
           const col = COLORS[cv.metric_type as keyof typeof COLORS];
+          const hist = histMap.get(cv.metric_type);
           return (
             <div key={cv.metric_type} className="rounded p-3 text-center" style={{ background: 'var(--bg0)' }}>
               <label className="block mb-1" style={{ fontSize: '8.5px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.7px', color: 'var(--t3)' }}>
@@ -295,6 +312,16 @@ function CompositeValuationCard({ ticker, items }: { ticker: string; items: Comp
                       {cv.deviation_pct !== null && (
                         <span style={{ color: cv.deviation_pct > 0 ? '#ef4444' : '#10b981', marginLeft: '4px' }}>
                           ({cv.deviation_pct > 0 ? '+' : ''}{cv.deviation_pct.toFixed(1)}%)
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {hist?.weighted_implied_multiple !== null && hist?.weighted_implied_multiple !== undefined && (
+                    <span className="block mt-1" style={{ fontSize: '9px', color: 'var(--t3)', fontFamily: "'JetBrains Mono', monospace" }}>
+                      Hist: {hist.weighted_implied_multiple.toFixed(2)}x
+                      {hist.deviation_pct !== null && (
+                        <span style={{ color: hist.deviation_pct > 0 ? '#ef4444' : '#10b981', marginLeft: '4px' }}>
+                          ({hist.deviation_pct > 0 ? '+' : ''}{hist.deviation_pct.toFixed(1)}%)
                         </span>
                       )}
                     </span>
