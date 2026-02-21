@@ -15,17 +15,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["dashboard"])
 
 # ---------------------------------------------------------------------------
-# In-memory response cache (capped at 5 snapshots)
+# In-memory response cache (capped at 5 snapshots).
+# Per-process: each uvicorn worker gets its own copy.
 # ---------------------------------------------------------------------------
 _MAX_CACHE = 5
 _cache: OrderedDict[int, dict] = OrderedDict()
+_cache_version: int = 0
 _latest_snapshot_id: int | None = None
 
 
 def invalidate_cache() -> None:
-    """Clear the latest-snapshot pointer so next request re-resolves it."""
-    global _latest_snapshot_id
+    """Clear cached data so next request re-fetches from DB."""
+    global _latest_snapshot_id, _cache_version
     _latest_snapshot_id = None
+    _cache.clear()
+    _cache_version += 1
 
 
 async def _resolve_latest_id(db: AsyncSession) -> int:
@@ -88,14 +92,14 @@ async def _get_enriched_data(
 
 def _make_cached_response(request: Request, data: dict, snapshot_id: int) -> Response:
     """Return 304 if ETag matches, otherwise full JSON with cache headers."""
-    etag = f'"{snapshot_id}"'
+    etag = f'"{snapshot_id}-{_cache_version}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     return JSONResponse(
         content=data,
         headers={
             "ETag": etag,
-            "Cache-Control": "public, max-age=300",
+            "Cache-Control": "no-cache",
         },
     )
 

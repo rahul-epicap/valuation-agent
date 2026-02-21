@@ -33,8 +33,8 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
   const col = COLORS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
-    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn),
+    [data, state.exTk, state.indOn, state.idxOn]
   );
 
   const pts = useMemo(
@@ -163,7 +163,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         regression={regression}
         date={data.dates[state.di]}
         metricType={type}
-        activeIndexNames={state.idxFilterMode === 'on' ? [...state.idxOn] : undefined}
+        activeIndexNames={[...state.idxOn]}
       />
       <div className="relative w-full" style={{ height: 380 }}>
         <Scatter data={{ datasets }} options={options} />

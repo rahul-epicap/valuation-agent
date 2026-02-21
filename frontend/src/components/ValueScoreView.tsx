@@ -33,8 +33,8 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
   const ticker = state.vsTicker;
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
-    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn),
+    [data, state.exTk, state.indOn, state.idxOn]
   );
 
   // Expensive: historical baselines (recompute only when data/metric/filters change)

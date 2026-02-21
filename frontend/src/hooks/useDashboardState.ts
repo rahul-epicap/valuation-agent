@@ -5,8 +5,6 @@ import { DashboardData, MetricType, PeerSearchResult, PeerValuationResult } from
 
 export type ViewMode = 'charts' | 'regression' | 'dcf' | 'peers';
 
-export type IndexFilterMode = 'off' | 'on';
-
 export interface DashboardState {
   view: ViewMode;
   reg: MetricType;
@@ -30,7 +28,6 @@ export interface DashboardState {
   dcfFadePeriod: number;
   // Index filtering
   idxOn: Set<string>;
-  idxFilterMode: IndexFilterMode;
   idxSrch: string;
   // Peer search
   peerQuery: string;
@@ -73,7 +70,6 @@ export type Action =
   | { type: 'TOGGLE_INDEX'; payload: string }
   | { type: 'SELECT_ALL_INDICES'; payload: string[] }
   | { type: 'CLEAR_ALL_INDICES' }
-  | { type: 'SET_INDEX_FILTER_MODE'; payload: IndexFilterMode }
   | { type: 'SET_IDX_SEARCH'; payload: string }
   | { type: 'SET_PEER_QUERY'; payload: string }
   | { type: 'SET_PEER_RESULTS'; payload: PeerSearchResult[] }
@@ -170,8 +166,6 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, idxOn: new Set(action.payload) };
     case 'CLEAR_ALL_INDICES':
       return { ...state, idxOn: new Set() };
-    case 'SET_INDEX_FILTER_MODE':
-      return { ...state, idxFilterMode: action.payload };
     case 'SET_IDX_SEARCH':
       return { ...state, idxSrch: action.payload };
     case 'SET_PEER_QUERY':
@@ -219,7 +213,6 @@ export function createInitialState(data: DashboardData): DashboardState {
     dcfProjectionYears: 10,
     dcfFadePeriod: 5,
     idxOn: new Set(['NDX']),
-    idxFilterMode: 'on',
     idxSrch: '',
     peerQuery: '',
     peerResults: [],

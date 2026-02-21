@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { DashboardData } from '../lib/types';
 import { Action, DashboardState } from '../hooks/useDashboardState';
 
@@ -11,18 +12,21 @@ interface IndexFilterProps {
 }
 
 export default function IndexFilter({ data, state, allIndices, dispatch }: IndexFilterProps) {
+  const indexCounts = useMemo(() => {
+    if (!data.indices) return {};
+    const counts: Record<string, number> = {};
+    for (const tickerIndices of Object.values(data.indices)) {
+      for (const idx of tickerIndices) {
+        counts[idx] = (counts[idx] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [data.indices]);
+
   if (!data.indices || allIndices.length === 0) return null;
 
   const q = state.idxSrch.toLowerCase();
   const visible = allIndices.filter((idx) => !q || idx.toLowerCase().includes(q));
-
-  // Count tickers per index
-  const indexCounts: Record<string, number> = {};
-  for (const tickerIndices of Object.values(data.indices)) {
-    for (const idx of tickerIndices) {
-      indexCounts[idx] = (indexCounts[idx] || 0) + 1;
-    }
-  }
 
   return (
     <div className="mb-4">

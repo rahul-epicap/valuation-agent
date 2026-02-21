@@ -34,8 +34,8 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
   const col = COLORS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
-    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn),
+    [data, state.exTk, state.indOn, state.idxOn]
   );
 
   const slopes = useMemo(() => {
