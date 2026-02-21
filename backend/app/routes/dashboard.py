@@ -95,9 +95,12 @@ def _compact_data(data: dict) -> dict:
         del fm[t]
 
     if empty_tickers:
-        data["tickers"] = [
-            t for t in data.get("tickers", []) if t not in set(empty_tickers)
-        ]
+        removed = set(empty_tickers)
+        data["tickers"] = [t for t in data.get("tickers", []) if t not in removed]
+        industries = data.get("industries")
+        if industries:
+            for t in empty_tickers:
+                industries.pop(t, None)
         logger.info("Compacted: stripped %d all-null tickers", len(empty_tickers))
 
     return data
