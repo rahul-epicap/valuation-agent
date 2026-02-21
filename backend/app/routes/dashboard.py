@@ -45,28 +45,43 @@ async def list_snapshots(db: AsyncSession = Depends(get_db)):
     ]
 
 
+async def _enrich_with_indices(data: dict, db: AsyncSession) -> dict:
+    """Enrich dashboard data with current index memberships."""
+    from app.services.index_service import build_indices_map
+
+    try:
+        indices_map = await build_indices_map(db)
+        if indices_map:
+            data["indices"] = indices_map
+    except Exception:
+        logger.debug("Could not enrich with index data", exc_info=True)
+    return data
+
+
 @router.get("/dashboard-data")
 async def get_latest_dashboard_data(db: AsyncSession = Depends(get_db)):
-    """Return the latest snapshot's dashboard_data JSON."""
+    """Return the latest snapshot's dashboard_data JSON, enriched with index memberships."""
     result = await db.execute(
         select(Snapshot).order_by(Snapshot.created_at.desc()).limit(1)
     )
     snapshot = result.scalar_one_or_none()
     if snapshot is None:
         raise HTTPException(status_code=404, detail="No snapshots found")
-    return snapshot.dashboard_data
+    data = dict(snapshot.dashboard_data)
+    return await _enrich_with_indices(data, db)
 
 
 @router.get("/dashboard-data/{snapshot_id}")
 async def get_dashboard_data_by_id(
     snapshot_id: int, db: AsyncSession = Depends(get_db)
 ):
-    """Return a specific snapshot's dashboard_data by ID."""
+    """Return a specific snapshot's dashboard_data by ID, enriched with index memberships."""
     result = await db.execute(select(Snapshot).where(Snapshot.id == snapshot_id))
     snapshot = result.scalar_one_or_none()
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
-    return snapshot.dashboard_data
+    data = dict(snapshot.dashboard_data)
+    return await _enrich_with_indices(data, db)
 
 
 class SnapshotImportRequest(BaseModel):

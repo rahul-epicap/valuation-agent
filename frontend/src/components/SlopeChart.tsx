@@ -15,7 +15,7 @@ import {
 import { DashboardData, COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterPoints, percentile } from '../lib/filters';
-import { linearRegression } from '../lib/regression';
+import { linearRegressionTrimmed } from '../lib/regression';
 import MetricToggle from './MetricToggle';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
@@ -34,8 +34,8 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
   const col = COLORS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn),
-    [data, state.exTk, state.indOn]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
+    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
   );
 
   const slopes = useMemo(() => {
@@ -46,7 +46,7 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
         result.push(null);
         continue;
       }
-      const rg = linearRegression(pts.map((p) => [p.x, p.y] as [number, number]));
+      const rg = linearRegressionTrimmed(pts.map((p) => [p.x, p.y] as [number, number]));
       result.push(rg ? +rg.slope.toFixed(6) : null);
     }
     return result;

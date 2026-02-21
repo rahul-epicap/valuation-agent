@@ -2,24 +2,34 @@
 
 import { DashboardData } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
+import IndexFilter from './IndexFilter';
 import IndustryFilter from './IndustryFilter';
 import GrowthRateFilter from './GrowthRateFilter';
 import TickerHighlight from './TickerHighlight';
 import TickerExclusions from './TickerExclusions';
+import PeerSearchPanel from './PeerSearchPanel';
 
 interface SidebarProps {
   data: DashboardData;
   state: DashboardState;
   dispatch: React.Dispatch<any>;
   allIndustries: string[];
+  allIndices: string[];
 }
 
-export default function Sidebar({ data, state, dispatch, allIndustries }: SidebarProps) {
+export default function Sidebar({ data, state, dispatch, allIndustries, allIndices }: SidebarProps) {
   return (
     <aside
       className="overflow-y-auto p-3"
       style={{ borderRight: '1px solid var(--brd)', background: 'var(--bg1)' }}
     >
+      <IndexFilter
+        data={data}
+        activeIndices={state.idxOn}
+        indexFilterMode={state.idxFilterMode}
+        allIndices={allIndices}
+        dispatch={dispatch}
+      />
       <IndustryFilter
         allIndustries={allIndustries}
         activeIndustries={state.indOn}
@@ -42,6 +52,13 @@ export default function Sidebar({ data, state, dispatch, allIndustries }: Sideba
         state={state}
         dispatch={dispatch}
       />
+      {state.view === 'peers' && (
+        <PeerSearchPanel
+          data={data}
+          state={state}
+          dispatch={dispatch}
+        />
+      )}
     </aside>
   );
 }

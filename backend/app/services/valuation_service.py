@@ -584,3 +584,241 @@ def compute_valuation_estimate(
         "peer_context": peer_context,
         "industry_context": industry_context,
     }
+
+
+# ---------------------------------------------------------------------------
+# 13. Index-based regression
+# ---------------------------------------------------------------------------
+def compute_index_regression(
+    data: dict,
+    metric_type: str,
+    index_tickers: list[str],
+    di: int | None = None,
+) -> dict | None:
+    """Run spot + historical baseline regression using only tickers from a specific index.
+
+    Args:
+        data: Dashboard data dict.
+        metric_type: One of 'evRev', 'evGP', 'pEPS'.
+        index_tickers: Tickers belonging to this index.
+        di: Date index for spot regression. Defaults to latest.
+
+    Returns a dict with spot and historical stats, or None if insufficient data.
+    """
+    if di is None:
+        di = len(data["dates"]) - 1
+
+    # Only keep tickers that exist in the snapshot
+    valid_tickers = [t for t in index_tickers if t in data["fm"]]
+    if len(valid_tickers) < 3:
+        return None
+
+    spot = compute_spot_regression(data, metric_type, di, valid_tickers)
+    hist = compute_historical_baseline(data, metric_type, valid_tickers)
+
+    return {
+        "spot": spot,
+        "historical": hist,
+        "ticker_count": len(valid_tickers),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 14. Peer-based composite valuation
+# ---------------------------------------------------------------------------
+def compute_peer_valuation(
+    data: dict,
+    ticker: str,
+    similar_tickers: list[dict],
+    indices_map: dict[str, list[str]],
+    revenue_growth: float,
+    eps_growth: float,
+    forward_eps: float | None = None,
+    current_pe: float | None = None,
+    eps_growth_estimates: list[float] | None = None,
+    dcf_discount_rate: float = 0.10,
+    dcf_terminal_growth: float = 0.0,
+    dcf_fade_period: int = 5,
+) -> dict:
+    """Orchestrate peer-based valuation with index regressions.
+
+    Steps:
+        1. Group similar stocks by their index memberships.
+        2. For each index with enough peers, run full index regression.
+        3. Predict implied multiple from each index regression.
+        4. Weight predictions by (peer similarity in that index) * (R² of regression).
+        5. Also run DCF and peer stats on the similar-stock subset.
+
+    Args:
+        data: Dashboard data dict.
+        ticker: Target ticker.
+        similar_tickers: [{ticker, score, description}, ...] from similarity search.
+        indices_map: {ticker: [index_short_names]} mapping.
+        revenue_growth: Target's revenue growth (decimal).
+        eps_growth: Target's EPS growth (decimal).
+        forward_eps: Target's forward EPS (for DCF).
+        current_pe: Target's current P/E.
+        eps_growth_estimates: Year-by-year EPS growth for DCF.
+        dcf_*: DCF parameters.
+
+    Returns comprehensive result dict.
+    """
+    latest_di = len(data["dates"]) - 1
+    metric_types = ["evRev", "evGP", "pEPS"]
+
+    # Build peer ticker list
+    peer_tickers = [p["ticker"] for p in similar_tickers if p["ticker"] in data["fm"]]
+    peer_scores = {p["ticker"]: p["score"] for p in similar_tickers}
+
+    # Group peers by index
+    index_peer_groups: dict[str, list[str]] = {}
+    for pt in peer_tickers:
+        pt_indices = indices_map.get(pt, [])
+        for idx_name in pt_indices:
+            index_peer_groups.setdefault(idx_name, []).append(pt)
+
+    # Collect all tickers per index (full membership, not just peers)
+    index_all_tickers: dict[str, list[str]] = {}
+    for t, idx_list in indices_map.items():
+        for idx_name in idx_list:
+            index_all_tickers.setdefault(idx_name, []).append(t)
+
+    # Per-metric index regressions
+    index_regression_results: list[dict] = []
+    composite_predictions: dict[str, list[tuple[float, float]]] = {
+        mt: [] for mt in metric_types
+    }
+
+    for idx_name, idx_peers in index_peer_groups.items():
+        idx_tickers = index_all_tickers.get(idx_name, [])
+        if len(idx_tickers) < 10:
+            continue
+
+        # Average similarity score of peers in this index
+        avg_peer_score = sum(peer_scores.get(p, 0) for p in idx_peers) / len(idx_peers)
+
+        idx_regressions: list[dict] = []
+        for mt in metric_types:
+            gk = GROWTH_KEYS[mt]
+            growth_rate = revenue_growth if gk == "rg" else eps_growth
+            growth_pct = growth_rate * 100
+
+            reg_result = compute_index_regression(data, mt, idx_tickers, latest_di)
+            if reg_result is None or reg_result["spot"] is None:
+                idx_regressions.append(
+                    {
+                        "metric_type": mt,
+                        "metric_label": METRIC_LABELS[mt],
+                        "regression": None,
+                        "implied_multiple": None,
+                    }
+                )
+                continue
+
+            spot = reg_result["spot"]
+            implied = spot["slope"] * growth_pct + spot["intercept"]
+            r2 = spot["r2"]
+
+            # Weight = similarity * R²
+            weight = avg_peer_score * r2
+            if weight > 0 and implied > 0:
+                composite_predictions[mt].append((implied, weight))
+
+            idx_regressions.append(
+                {
+                    "metric_type": mt,
+                    "metric_label": METRIC_LABELS[mt],
+                    "regression": spot,
+                    "implied_multiple": implied,
+                    "historical": reg_result.get("historical"),
+                }
+            )
+
+        index_regression_results.append(
+            {
+                "index_name": idx_name,
+                "peer_count_in_index": len(idx_peers),
+                "total_index_tickers": len(idx_tickers),
+                "avg_peer_similarity": avg_peer_score,
+                "regressions": idx_regressions,
+            }
+        )
+
+    # Compute weighted composite implied multiples
+    composite: list[dict] = []
+    for mt in metric_types:
+        predictions = composite_predictions[mt]
+        if not predictions:
+            composite.append(
+                {
+                    "metric_type": mt,
+                    "metric_label": METRIC_LABELS[mt],
+                    "weighted_implied_multiple": None,
+                    "num_indices": 0,
+                }
+            )
+            continue
+
+        total_weight = sum(w for _, w in predictions)
+        weighted_sum = sum(v * w for v, w in predictions)
+        weighted_avg = weighted_sum / total_weight if total_weight > 0 else None
+
+        # Get actual multiple for deviation
+        mk = MULTIPLE_KEYS[mt]
+        actual: float | None = None
+        if ticker in data["fm"]:
+            val = data["fm"][ticker][mk][latest_di]
+            if val is not None:
+                actual = float(val)
+
+        deviation: float | None = None
+        if actual is not None and weighted_avg is not None and weighted_avg > 0:
+            deviation = ((actual - weighted_avg) / weighted_avg) * 100
+
+        composite.append(
+            {
+                "metric_type": mt,
+                "metric_label": METRIC_LABELS[mt],
+                "weighted_implied_multiple": weighted_avg,
+                "actual_multiple": actual,
+                "deviation_pct": deviation,
+                "num_indices": len(predictions),
+            }
+        )
+
+    # Peer stats on just the similar-stock subset
+    peer_stats: list[dict] = []
+    for mt in metric_types:
+        mk = MULTIPLE_KEYS[mt]
+        tv: float | None = None
+        if ticker in data["fm"]:
+            val = data["fm"][ticker][mk][latest_di]
+            if val is not None:
+                tv = float(val)
+        stats = compute_peer_stats(data, mt, latest_di, peer_tickers, tv)
+        stats["metric_type"] = mt
+        stats["metric_label"] = METRIC_LABELS[mt]
+        peer_stats.append(stats)
+
+    # DCF on target
+    dcf_estimates = eps_growth_estimates if eps_growth_estimates else [eps_growth]
+    dcf_result: dict | None = None
+    if forward_eps is not None and forward_eps > 0:
+        dcf_result = compute_dcf(
+            forward_eps=forward_eps,
+            eps_growth_estimates=dcf_estimates,
+            discount_rate=dcf_discount_rate,
+            terminal_growth=dcf_terminal_growth,
+            fade_period=dcf_fade_period,
+            current_pe=current_pe,
+        )
+
+    return {
+        "ticker": ticker,
+        "peer_count": len(peer_tickers),
+        "similar_tickers": similar_tickers,
+        "index_regressions": index_regression_results,
+        "composite_valuation": composite,
+        "peer_stats": peer_stats,
+        "dcf": dcf_result,
+    }

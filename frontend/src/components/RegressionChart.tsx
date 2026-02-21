@@ -13,7 +13,7 @@ import {
 import { DashboardData, COLORS, METRIC_TITLES, Y_LABELS, X_LABELS, HIGHLIGHT_COLORS } from '../lib/types';
 import { DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterPoints } from '../lib/filters';
-import { linearRegression } from '../lib/regression';
+import { linearRegressionTrimmed } from '../lib/regression';
 import MetricToggle from './MetricToggle';
 import RegressionStats from './RegressionStats';
 
@@ -30,8 +30,8 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
   const col = COLORS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn),
-    [data, state.exTk, state.indOn]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
+    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
   );
 
   const pts = useMemo(
@@ -40,7 +40,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
   );
 
   const regression = useMemo(
-    () => linearRegression(pts.map((p) => [p.x, p.y] as [number, number])),
+    () => linearRegressionTrimmed(pts.map((p) => [p.x, p.y] as [number, number])),
     [pts]
   );
 
@@ -156,7 +156,12 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_REG', payload: t })} />
       </div>
-      <RegressionStats regression={regression} date={data.dates[state.di]} metricType={type} />
+      <RegressionStats
+        regression={regression}
+        date={data.dates[state.di]}
+        metricType={type}
+        activeIndexNames={state.idxFilterMode === 'on' ? [...state.idxOn] : undefined}
+      />
       <div className="relative w-full" style={{ height: 380 }}>
         <Scatter data={{ datasets }} options={options} />
       </div>

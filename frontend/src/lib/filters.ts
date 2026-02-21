@@ -3,14 +3,21 @@ import { DashboardData, MetricType, ScatterPoint, MULTIPLE_KEYS, GROWTH_KEYS } f
 export function getActiveTickers(
   data: DashboardData,
   excludedTickers: Set<string>,
-  activeIndustries: Set<string>
+  activeIndustries: Set<string>,
+  activeIndices?: Set<string>,
+  indexFilterMode?: 'off' | 'on',
 ): string[] {
   const hasIndustries = Object.keys(data.industries).length > 0;
-  return data.tickers.filter(
-    (t) =>
-      !excludedTickers.has(t) &&
-      (!hasIndustries || activeIndustries.has(data.industries[t]))
-  );
+  const indexFilterActive = indexFilterMode === 'on' && activeIndices && activeIndices.size > 0 && data.indices;
+  return data.tickers.filter((t) => {
+    if (excludedTickers.has(t)) return false;
+    if (hasIndustries && !activeIndustries.has(data.industries[t])) return false;
+    if (indexFilterActive) {
+      const tickerIndices = data.indices![t];
+      if (!tickerIndices || !tickerIndices.some((idx) => activeIndices!.has(idx))) return false;
+    }
+    return true;
+  });
 }
 
 export function okEps(
