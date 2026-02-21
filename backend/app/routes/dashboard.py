@@ -1,3 +1,4 @@
+import gzip
 import logging
 from collections import OrderedDict
 
@@ -21,7 +22,7 @@ router = APIRouter(tags=["dashboard"])
 # Per-process: each uvicorn worker gets its own copy.
 # ---------------------------------------------------------------------------
 _MAX_CACHE = 5
-_cache: OrderedDict[int, bytes] = OrderedDict()
+_cache: OrderedDict[int, tuple[bytes, bytes]] = OrderedDict()  # (raw, gzipped)
 _cache_version: int = 0
 _latest_snapshot_id: int | None = None
 
@@ -94,9 +95,12 @@ def _compact_data(data: dict) -> dict:
         del fm[t]
 
     if empty_tickers:
-        data["tickers"] = [
-            t for t in data.get("tickers", []) if t not in set(empty_tickers)
-        ]
+        removed = set(empty_tickers)
+        data["tickers"] = [t for t in data.get("tickers", []) if t not in removed]
+        industries = data.get("industries")
+        if industries:
+            for t in empty_tickers:
+                industries.pop(t, None)
         logger.info("Compacted: stripped %d all-null tickers", len(empty_tickers))
 
     return data
@@ -104,13 +108,14 @@ def _compact_data(data: dict) -> dict:
 
 async def _get_enriched_data(
     snapshot_id: int | None, db: AsyncSession
-) -> tuple[int, bytes]:
-    """Return (snapshot_id, serialized_bytes), using cache when available."""
+) -> tuple[int, bytes, bytes]:
+    """Return (snapshot_id, raw_bytes, gzipped_bytes), using cache when available."""
     sid = snapshot_id if snapshot_id is not None else await _resolve_latest_id(db)
 
     if sid in _cache:
         _cache.move_to_end(sid)
-        return sid, _cache[sid]
+        raw, gz = _cache[sid]
+        return sid, raw, gz
 
     if snapshot_id is not None:
         result = await db.execute(select(Snapshot).where(Snapshot.id == sid))
@@ -132,23 +137,50 @@ async def _get_enriched_data(
     data = _compact_data(data)
 
     serialized = orjson.dumps(data)
+    # Pre-compress once at level 1 (~20x faster than level 9, ~10-15% larger)
+    compressed = gzip.compress(serialized, compresslevel=1)
+    logger.info(
+        "Cached snapshot %d: %d KB raw, %d KB gzipped",
+        sid,
+        len(serialized) // 1024,
+        len(compressed) // 1024,
+    )
 
-    _cache[sid] = serialized
+    _cache[sid] = (serialized, compressed)
     if len(_cache) > _MAX_CACHE:
         _cache.popitem(last=False)
 
-    return sid, serialized
+    return sid, serialized, compressed
 
 
 def _make_cached_response(
-    request: Request, serialized: bytes, snapshot_id: int
+    request: Request,
+    raw: bytes,
+    compressed: bytes,
+    snapshot_id: int,
 ) -> Response:
-    """Return 304 if ETag matches, otherwise full JSON with cache headers."""
+    """Return 304 if ETag matches, otherwise full JSON with cache headers.
+
+    Serves pre-compressed bytes when the client accepts gzip, bypassing
+    GZipMiddleware's per-request re-compression of the ~100 MB payload.
+    """
     etag = f'"{snapshot_id}-{_cache_version}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
+
+    accept_encoding = request.headers.get("accept-encoding", "")
+    if "gzip" in accept_encoding:
+        return Response(
+            content=compressed,
+            media_type="application/json",
+            headers={
+                "Content-Encoding": "gzip",
+                "ETag": etag,
+                "Cache-Control": "no-cache",
+            },
+        )
     return Response(
-        content=serialized,
+        content=raw,
         media_type="application/json",
         headers={
             "ETag": etag,
@@ -195,8 +227,8 @@ async def get_latest_dashboard_data(
     db: AsyncSession = Depends(get_db),
 ):
     """Return the latest snapshot's dashboard_data JSON, enriched with index memberships."""
-    sid, serialized = await _get_enriched_data(None, db)
-    return _make_cached_response(request, serialized, sid)
+    sid, raw, compressed = await _get_enriched_data(None, db)
+    return _make_cached_response(request, raw, compressed, sid)
 
 
 @router.get("/dashboard-data/{snapshot_id}")
@@ -206,8 +238,8 @@ async def get_dashboard_data_by_id(
     db: AsyncSession = Depends(get_db),
 ):
     """Return a specific snapshot's dashboard_data by ID, enriched with index memberships."""
-    sid, serialized = await _get_enriched_data(snapshot_id, db)
-    return _make_cached_response(request, serialized, sid)
+    sid, raw, compressed = await _get_enriched_data(snapshot_id, db)
+    return _make_cached_response(request, raw, compressed, sid)
 
 
 class SnapshotImportRequest(BaseModel):
