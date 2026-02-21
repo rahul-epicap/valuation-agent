@@ -34,13 +34,13 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
   const col = COLORS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
-    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn),
+    [data, state.exTk, state.indOn, state.idxOn]
   );
 
   const slopes = useMemo(() => {
     const result: (number | null)[] = [];
-    for (let di = 0; di < data.dates.length; di++) {
+    for (let di = startDi; di <= endDi; di++) {
       const pts = filterPoints(data, type, di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax);
       if (pts.length < 5) {
         result.push(null);
@@ -50,12 +50,10 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
       result.push(rg ? +rg.slope.toFixed(6) : null);
     }
     return result;
-  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
-
-  const slicedSlopes = useMemo(() => slopes.slice(startDi, endDi + 1), [slopes, startDi, endDi]);
+  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, startDi, endDi]);
 
   const percentileDatasets = useMemo(() => {
-    const valid = slicedSlopes.filter((v): v is number => v != null);
+    const valid = slopes.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
@@ -97,7 +95,7 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
         order: 4,
       },
     ];
-  }, [slicedSlopes, startDi, endDi]);
+  }, [slopes, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -147,7 +145,7 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
   const datasets = [
     {
       label: 'Slope',
-      data: slicedSlopes,
+      data: slopes,
       borderColor: col.m,
       backgroundColor: col.b,
       fill: { target: 'origin', above: col.m + '12' },

@@ -25,8 +25,7 @@ export default function Sidebar({ data, state, dispatch, allIndustries, allIndic
     >
       <IndexFilter
         data={data}
-        activeIndices={state.idxOn}
-        indexFilterMode={state.idxFilterMode}
+        state={state}
         allIndices={allIndices}
         dispatch={dispatch}
       />

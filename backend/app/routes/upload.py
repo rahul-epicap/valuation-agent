@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
+from app.routes.dashboard import invalidate_cache
 from app.services.excel_parser import parse_excel
 
 router = APIRouter(tags=["upload"])
@@ -58,6 +59,8 @@ async def upload_excel(
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)
+
+    invalidate_cache()
 
     return {
         "id": snapshot.id,

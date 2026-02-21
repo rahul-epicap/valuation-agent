@@ -5,10 +5,9 @@ export function getActiveTickers(
   excludedTickers: Set<string>,
   activeIndustries: Set<string>,
   activeIndices?: Set<string>,
-  indexFilterMode?: 'off' | 'on',
 ): string[] {
   const hasIndustries = Object.keys(data.industries).length > 0;
-  const indexFilterActive = indexFilterMode === 'on' && activeIndices && activeIndices.size > 0 && data.indices;
+  const indexFilterActive = activeIndices && activeIndices.size > 0 && data.indices;
   return data.tickers.filter((t) => {
     if (excludedTickers.has(t)) return false;
     if (hasIndustries && !activeIndustries.has(data.industries[t])) return false;

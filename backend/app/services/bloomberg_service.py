@@ -93,7 +93,9 @@ class BloombergService:
 
     def __init__(self) -> None:
         if not _HAS_BLP:
-            raise RuntimeError("blp package is not installed — Bloomberg features unavailable")
+            raise RuntimeError(
+                "blp package is not installed — Bloomberg features unavailable"
+            )
         self._bquery: blp.BlpQuery | None = None
         self._tickers: list[str] = []
         self._load_tickers()

@@ -34,14 +34,14 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
   const mk = MULTIPLE_KEYS[type];
 
   const activeTickers = useMemo(
-    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode),
-    [data, state.exTk, state.indOn, state.idxOn, state.idxFilterMode]
+    () => getActiveTickers(data, state.exTk, state.indOn, state.idxOn),
+    [data, state.exTk, state.indOn, state.idxOn]
   );
 
   const { avgs, q75s } = useMemo(() => {
     const avgs: (number | null)[] = [];
     const q75s: (number | null)[] = [];
-    for (let di = 0; di < data.dates.length; di++) {
+    for (let di = startDi; di <= endDi; di++) {
       const vals = filterMultiples(data, type, di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax);
       if (vals.length < 4) {
         avgs.push(null);
@@ -53,13 +53,10 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
       q75s.push(+vals[Math.floor(vals.length * 0.75)].toFixed(2));
     }
     return { avgs, q75s };
-  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]);
-
-  const slicedAvgs = useMemo(() => avgs.slice(startDi, endDi + 1), [avgs, startDi, endDi]);
-  const slicedQ75s = useMemo(() => q75s.slice(startDi, endDi + 1), [q75s, startDi, endDi]);
+  }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, startDi, endDi]);
 
   const percentileDatasets = useMemo(() => {
-    const valid = slicedAvgs.filter((v): v is number => v != null);
+    const valid = avgs.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
@@ -101,14 +98,14 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
         order: 5,
       },
     ];
-  }, [slicedAvgs, startDi, endDi]);
+  }, [avgs, startDi, endDi]);
 
   const datasets = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ds: any[] = [
       {
         label: 'Top Quartile',
-        data: slicedQ75s,
+        data: q75s,
         borderColor: col.m,
         backgroundColor: col.m + '18',
         fill: true,
@@ -117,7 +114,7 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
       },
       {
         label: 'Average',
-        data: slicedAvgs,
+        data: avgs,
         borderColor: '#8892a6',
         backgroundColor: 'rgba(136,146,166,.08)',
         fill: true,
@@ -146,7 +143,7 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
     });
 
     return ds;
-  }, [slicedAvgs, slicedQ75s, percentileDatasets, state.hlTk, data, mk, col, startDi, endDi]);
+  }, [avgs, q75s, percentileDatasets, state.hlTk, data, mk, col, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
