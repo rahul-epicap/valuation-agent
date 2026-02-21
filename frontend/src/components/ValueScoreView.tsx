@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { DashboardData, MetricType, METRIC_LABELS, COLORS } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers } from '../lib/filters';
 import {
   computeHistoricalBaselineWeighted,
@@ -25,7 +25,7 @@ import RegressionComparison from './RegressionComparison';
 interface ValueScoreViewProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function ValueScoreView({ data, state, dispatch }: ValueScoreViewProps) {

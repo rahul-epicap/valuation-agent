@@ -3,7 +3,7 @@
  * Usage: npx tsx scripts/compare-regressions.ts [API_URL]
  */
 
-import { DashboardData, MetricType, AggregateMethodResult } from '../src/lib/types';
+import { DashboardData, MetricType } from '../src/lib/types';
 import { computeAggregateComparison, computeHistoricalBaseline, computeHistoricalBaselineWeighted } from '../src/lib/valueScore';
 
 const API_URL = process.argv[2] || 'http://localhost:8000';

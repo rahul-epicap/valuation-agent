@@ -4,14 +4,17 @@ import { useMemo } from 'react';
 import { Scatter } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
+  ChartDataset,
+  ChartOptions,
   LinearScale,
   PointElement,
   LineElement,
   Tooltip,
   Legend,
+  TooltipItem,
 } from 'chart.js';
 import { DashboardData, COLORS, METRIC_TITLES, Y_LABELS, X_LABELS, HIGHLIGHT_COLORS } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterPoints } from '../lib/filters';
 import { linearRegressionCooks } from '../lib/regression';
 import MetricToggle from './MetricToggle';
@@ -22,7 +25,7 @@ ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Legend);
 interface RegressionChartProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function RegressionChart({ data, state, dispatch }: RegressionChartProps) {
@@ -57,7 +60,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     const sl = regression?.slope ?? 0;
     const ic = regression?.intercept ?? 0;
 
-    const ds: any[] = [
+    const ds: ChartDataset<'scatter'>[] = [
       {
         label: 'Tickers',
         data: norm.map((p) => ({ x: p.x, y: p.y, t: p.t })),
@@ -108,7 +111,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     return { datasets: ds, hlLegend: legend };
   }, [pts, state.hlTk, regression, col]);
 
-  const options: any = {
+  const options: ChartOptions<'scatter'> = {
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 200 },
@@ -119,26 +122,26 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         borderColor: '#253252',
         borderWidth: 1,
         cornerRadius: 5,
-        titleFont: { family: "'JetBrains Mono', monospace", size: 11, weight: '600' },
+        titleFont: { family: "'JetBrains Mono', monospace", size: 11, weight: 'bold' as const },
         bodyFont: { size: 10.5 },
         padding: 8,
         callbacks: {
-          title: (items: any[]) => items[0]?.raw?.t || '',
-          label: (item: any) =>
-            `Multiple: ${item.parsed.y.toFixed(2)}x  |  Growth: ${item.parsed.x.toFixed(1)}%`,
+          title: (items: TooltipItem<'scatter'>[]) => (items[0]?.raw as Record<string, unknown>)?.t as string || '',
+          label: (item: TooltipItem<'scatter'>) =>
+            `Multiple: ${item.parsed.y?.toFixed(2)}x  |  Growth: ${item.parsed.x?.toFixed(1)}%`,
         },
       },
     },
     scales: {
       x: {
-        title: { display: true, text: X_LABELS[type], font: { weight: '600' } },
+        title: { display: true, text: X_LABELS[type], font: { weight: 'bold' as const } },
         grid: { color: 'rgba(28,40,66,.25)' },
-        ticks: { callback: (v: number) => v + '%' },
+        ticks: { callback: (v: string | number) => v + '%' },
       },
       y: {
-        title: { display: true, text: Y_LABELS[type], font: { weight: '600' } },
+        title: { display: true, text: Y_LABELS[type], font: { weight: 'bold' as const } },
         grid: { color: 'rgba(28,40,66,.25)' },
-        ticks: { callback: (v: number) => v + 'x' },
+        ticks: { callback: (v: string | number) => v + 'x' },
       },
     },
   };

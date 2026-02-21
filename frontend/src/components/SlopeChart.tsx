@@ -13,7 +13,7 @@ import {
   Filler,
 } from 'chart.js';
 import { DashboardData, COLORS } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterPoints, percentile } from '../lib/filters';
 import { linearRegressionCooks } from '../lib/regression';
 import MetricToggle from './MetricToggle';
@@ -23,7 +23,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 interface SlopeChartProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
   startDi: number;
   endDi: number;
   chartHeight: number;

@@ -1,13 +1,13 @@
 'use client';
 
 import { DashboardData, SnapshotMeta } from '../lib/types';
-import { DashboardState, ViewMode } from '../hooks/useDashboardState';
+import { Action, DashboardState, ViewMode } from '../hooks/useDashboardState';
 import DatePicker from './DatePicker';
 
 interface HeaderProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
   snapshots: SnapshotMeta[];
   activeSnapshotId?: number;
   onSnapshotChange: (id: number) => void;

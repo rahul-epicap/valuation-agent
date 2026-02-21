@@ -1,11 +1,13 @@
 'use client';
 
+import { Action } from '../hooks/useDashboardState';
+
 interface GrowthRateFilterProps {
   revGrMin: number | null;
   revGrMax: number | null;
   epsGrMin: number | null;
   epsGrMax: number | null;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
 }
 
 export default function GrowthRateFilter({

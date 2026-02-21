@@ -13,7 +13,7 @@ import {
   Filler,
 } from 'chart.js';
 import { DashboardData, COLORS, HIGHLIGHT_COLORS, MULTIPLE_KEYS, Y_LABELS_TIME } from '../lib/types';
-import { DashboardState } from '../hooks/useDashboardState';
+import { Action, DashboardState } from '../hooks/useDashboardState';
 import { getActiveTickers, filterMultiples, percentile } from '../lib/filters';
 import MetricToggle from './MetricToggle';
 
@@ -22,7 +22,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 interface MultiplesChartProps {
   data: DashboardData;
   state: DashboardState;
-  dispatch: React.Dispatch<any>;
+  dispatch: React.Dispatch<Action>;
   startDi: number;
   endDi: number;
   chartHeight: number;
