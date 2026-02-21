@@ -123,6 +123,11 @@ async def _get_enriched_data(
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
     data = dict(snapshot.dashboard_data)
+    # Deep-copy fm so _compact_data's in-place mutations don't touch the ORM object
+    if "fm" in data:
+        data["fm"] = {
+            t: {k: list(v) for k, v in m.items()} for t, m in data["fm"].items()
+        }
     data = await _enrich_with_indices(data, db)
     data = _compact_data(data)
 
