@@ -173,7 +173,7 @@ export default function ValueScoreView({ data, state, dispatch }: ValueScoreView
             </h3>
 
             {/* Three-column result cards */}
-            <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="grid gap-3 md:gap-4 mb-4 grid-cols-1 md:grid-cols-3">
               <ScorePanel
                 title="Full History"
                 subtitle={`${data.dates[0]?.slice(0, 4)}\u2013${data.dates[data.dates.length - 1]?.slice(0, 4)}`}
@@ -293,8 +293,7 @@ function ScorePanel({
       {score ? (
         <div className="mb-3">
           <div
-            className="grid gap-2 mb-2"
-            style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
+            className="grid gap-2 mb-2 grid-cols-3"
           >
             <StatCell label="Actual" value={`${score.actual.toFixed(1)}x`} color={col.m} />
             <StatCell label="Predicted" value={`${score.predicted.toFixed(1)}x`} color="var(--t2)" />
@@ -403,8 +402,7 @@ function SpotPanel({
       {spotScore ? (
         <div className="mb-3">
           <div
-            className="grid gap-2 mb-2"
-            style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
+            className="grid gap-2 mb-2 grid-cols-3"
           >
             <StatCell label="Actual" value={`${spotScore.actual.toFixed(1)}x`} color={col.m} />
             <StatCell label="Predicted" value={`${spotScore.predicted.toFixed(1)}x`} color="var(--t2)" />
@@ -422,7 +420,7 @@ function SpotPanel({
         className="rounded p-2"
         style={{ background: 'var(--bg2)' }}
       >
-        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        <div className="grid gap-1 grid-cols-4">
           <MiniStat label="Slope" value={spotScore ? spotScore.slope.toFixed(2) : '—'} />
           <MiniStat label="Intercept" value={spotScore ? spotScore.intercept.toFixed(1) : '—'} />
           <MiniStat label="R²" value={spotScore ? spotScore.r2.toFixed(2) : '—'} />
@@ -492,7 +490,7 @@ function PercentilePanel({
         Historical Percentile Context
       </h3>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div className="grid gap-3 md:gap-4 grid-cols-2 md:grid-cols-4">
         <div className="rounded-lg p-3 text-center" style={{ background: 'var(--bg0)' }}>
           <label
             className="block mb-1"

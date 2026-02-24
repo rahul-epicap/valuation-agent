@@ -15,6 +15,7 @@ import UploadModal from '../components/UploadModal';
 import ValueScoreView from '../components/ValueScoreView';
 import DcfView from '../components/DcfView';
 import PeerValuationView from '../components/PeerValuationView';
+import MobileSidebar from '../components/MobileSidebar';
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -145,6 +146,7 @@ function DashboardContent({
   onUploadSuccess: () => void;
 }) {
   const { state, dispatch, allIndustries, allIndices } = useDashboardState(data);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg0)' }}>
@@ -158,8 +160,11 @@ function DashboardContent({
         onUploadClick={onUploadClick}
         onUpdateClick={onUpdateClick}
         updating={updating}
+        onMenuToggle={() => setSidebarOpen((o) => !o)}
       />
-      <div className="grid" style={{ gridTemplateColumns: '260px 1fr', height: 'calc(100vh - 53px)' }}>
+
+      {/* Desktop: side-by-side grid. Mobile: full-width main only */}
+      <div className="hidden md:grid" style={{ gridTemplateColumns: '260px 1fr', height: 'calc(100vh - 53px)' }}>
         <Sidebar
           data={data}
           state={state}
@@ -209,6 +214,66 @@ function DashboardContent({
           )}
         </main>
       </div>
+
+      {/* Mobile: full-width content */}
+      <div className="md:hidden overflow-y-auto" style={{ height: 'calc(100vh - 53px)' }}>
+        <main className="p-3">
+          {state.view === 'regression' ? (
+            <ValueScoreView data={data} state={state} dispatch={dispatch} />
+          ) : state.view === 'dcf' ? (
+            <DcfView data={data} state={state} dispatch={dispatch} />
+          ) : state.view === 'peers' ? (
+            <PeerValuationView data={data} state={state} dispatch={dispatch} />
+          ) : (
+            <>
+              <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                <RegressionChart data={data} state={state} dispatch={dispatch} />
+              </div>
+              <div className="grid grid-cols-1 gap-3">
+                <div className="rounded-xl p-3" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                  <ChartContainer dates={data.dates}>
+                    {({ startDi, endDi, chartHeight }) => (
+                      <MultiplesChart data={data} state={state} dispatch={dispatch}
+                        startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                    )}
+                  </ChartContainer>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                  <ChartContainer dates={data.dates}>
+                    {({ startDi, endDi, chartHeight }) => (
+                      <SlopeChart data={data} state={state} dispatch={dispatch}
+                        startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                    )}
+                  </ChartContainer>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+                  <ChartContainer dates={data.dates}>
+                    {({ startDi, endDi, chartHeight }) => (
+                      <InterceptChart data={data} state={state} dispatch={dispatch}
+                        startDi={startDi} endDi={endDi} chartHeight={chartHeight} />
+                    )}
+                  </ChartContainer>
+                </div>
+              </div>
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* Mobile sidebar drawer */}
+      <MobileSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      >
+        <Sidebar
+          data={data}
+          state={state}
+          dispatch={dispatch}
+          allIndustries={allIndustries}
+          allIndices={allIndices}
+        />
+      </MobileSidebar>
+
       {showUpload && (
         <UploadModal onClose={onUploadClose} onSuccess={onUploadSuccess} />
       )}
