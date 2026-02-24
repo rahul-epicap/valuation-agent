@@ -156,7 +156,7 @@ function DcfInputControls({
       <h3 className="text-xs font-bold mb-3" style={{ color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
         DCF Parameters
       </h3>
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div className="grid gap-3 md:gap-4 grid-cols-2 md:grid-cols-4">
         <InputField
           label="Discount Rate"
           value={state.dcfDiscountRate}
@@ -270,7 +270,7 @@ function DcfResultSummary({ result }: { result: DcfResult }) {
       </h3>
 
       {/* Primary cards */}
-      <div className="grid gap-3 mb-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="grid gap-3 mb-3 grid-cols-1 md:grid-cols-3">
         <StatCard label="Current P/E" value={`${result.currentPe.toFixed(1)}x`} color="var(--t1)" />
         <StatCard label="Implied DCF P/E" value={`${result.impliedPe.toFixed(1)}x`} color="var(--blue)" />
         <div className="rounded-lg p-3 text-center" style={{ background: devBg }}>
@@ -284,7 +284,7 @@ function DcfResultSummary({ result }: { result: DcfResult }) {
       </div>
 
       {/* Secondary stats */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
         <StatCard label="Sum of PVs / Share" value={`$${result.sumPvEps.toFixed(2)}`} color="var(--t2)" />
         <StatCard label="PV Terminal Value / Share" value={`$${result.pvTerminalValue.toFixed(2)}`} color="var(--t2)" />
         <StatCard label="Terminal Value %" value={`${result.terminalValuePct.toFixed(1)}%`} color="var(--t2)" />

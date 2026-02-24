@@ -194,10 +194,14 @@ export default function ChartContainer({ dates, children }: ChartContainerProps)
     );
   }
 
+  // Use smaller chart height on mobile
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const defaultHeight = isMobile ? 240 : 320;
+
   return (
     <div>
       {toolbar}
-      {children({ startDi, endDi, chartHeight: 320 })}
+      {children({ startDi, endDi, chartHeight: defaultHeight })}
     </div>
   );
 }

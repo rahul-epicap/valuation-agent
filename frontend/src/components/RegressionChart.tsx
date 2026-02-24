@@ -198,7 +198,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         nRemoved={nRemoved}
         activeIndexNames={[...state.idxOn]}
       />
-      <div className="relative w-full" style={{ height: 380 }}>
+      <div className="relative w-full h-[260px] md:h-[380px]">
         <Scatter data={{ datasets }} options={options} />
       </div>
       <div className="flex flex-wrap gap-1 mt-1.5">

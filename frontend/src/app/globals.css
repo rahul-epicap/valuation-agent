@@ -37,3 +37,21 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Mobile sidebar overlay backdrop */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 40;
+}
+
+/* Touch-friendly tap targets on mobile */
+@media (max-width: 767px) {
+  button, select, input[type="text"], input[type="number"] {
+    min-height: 36px;
+  }
+  ::-webkit-scrollbar {
+    width: 3px;
+  }
+}

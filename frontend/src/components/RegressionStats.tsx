@@ -28,7 +28,7 @@ export default function RegressionStats({ regression, date, metricType, nRemoved
 
   return (
     <div>
-      <div className="grid gap-2 mb-3" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+      <div className="grid gap-1.5 md:gap-2 mb-3 grid-cols-3 md:grid-cols-5">
         {stats.map(([label, value]) => (
           <div
             key={label}

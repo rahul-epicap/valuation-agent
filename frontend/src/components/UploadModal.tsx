@@ -30,8 +30,8 @@ export default function UploadModal({ onClose, onSuccess }: UploadModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,.6)' }}>
-      <div className="rounded-xl p-6 w-full max-w-md" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center" style={{ background: 'rgba(0,0,0,.6)' }}>
+      <div className="rounded-t-xl md:rounded-xl p-4 md:p-6 w-full md:max-w-md" style={{ background: 'var(--bg2)', border: '1px solid var(--brd)' }}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">Upload Excel Data</h2>
           <button onClick={onClose} className="text-lg cursor-pointer" style={{ color: 'var(--t3)' }}>&times;</button>

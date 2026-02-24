@@ -189,7 +189,7 @@ export default function DeviationChart({
           How this ticker&apos;s under/overvaluation has evolved — per-period regression
         </p>
       </div>
-      <div style={{ height: 280 }}>
+      <div className="h-[220px] md:h-[280px]">
         <Line data={chartData} options={options} plugins={[currentDatePlugin]} />
       </div>
     </div>

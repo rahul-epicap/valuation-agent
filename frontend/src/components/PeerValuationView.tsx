@@ -298,7 +298,7 @@ function CompositeValuationCard({ ticker, items, historicalItems }: CompositeVal
       <div className="font-bold uppercase mb-2" style={{ fontSize: '9.5px', color: 'var(--t3)', letterSpacing: '1px' }}>
         Composite Valuation — {ticker}
       </div>
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
         {items.map((cv) => {
           const col = COLORS[cv.metric_type as keyof typeof COLORS];
           const hist = histMap.get(cv.metric_type);
@@ -354,7 +354,7 @@ function PeerStatsCard({ stats }: { stats: PeerValuationResult['peer_stats'] }) 
       <div className="font-bold uppercase mb-2" style={{ fontSize: '9.5px', color: 'var(--t3)', letterSpacing: '1px' }}>
         Peer Distribution Stats
       </div>
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
         {stats.map((ps) => {
           const col = COLORS[ps.metric_type as keyof typeof COLORS];
           return (
