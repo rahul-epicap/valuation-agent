@@ -7,6 +7,7 @@
  * Uses Gauss-Jordan elimination with partial pivoting for inversion.
  */
 import { MultiFactorRegressionResult, MultiFactorScatterPoint, RegressionFactor } from './types';
+import { CONTINUOUS_FACTORS } from './filters';
 
 // ---------------------------------------------------------------------------
 // Matrix utilities (dense, small matrices — at most ~100×100)
@@ -210,7 +211,7 @@ export function multiFactorOLS(
   // Build factor results
   const factors: RegressionFactor[] = keptNames.map((name, i) => ({
     name,
-    type: 'binary',
+    type: name in CONTINUOUS_FACTORS ? 'continuous' : 'binary',
     coefficient: beta[i + 2], // skip intercept and growth
   }));
 

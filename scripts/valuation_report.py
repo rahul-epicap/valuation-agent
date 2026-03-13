@@ -123,8 +123,11 @@ def format_multi_factor(resp: dict) -> str:
         for f in sorted(factors, key=lambda x: abs(x["coefficient"]), reverse=True):
             coeff = f["coefficient"]
             sign = "+" if coeff >= 0 else "\u2212"
-            effect = f"{sign}{abs(coeff):.1f}x {'premium' if coeff >= 0 else 'discount'}"
-            lines.append(f"| {f['name']:<6} | {coeff:+.3f}     | {effect} |")
+            if f.get("type") == "continuous":
+                effect = f"{sign}{abs(coeff):.2f}x per unit"
+            else:
+                effect = f"{sign}{abs(coeff):.1f}x {'premium' if coeff >= 0 else 'discount'}"
+            lines.append(f"| {f['name']:<12} | {coeff:+.3f}     | {effect} |")
 
     lines.append("")
     return "\n".join(lines)

@@ -153,9 +153,11 @@ export default function RegressionStats({
                           className="text-right px-2 py-1"
                           style={{ color: 'var(--t3)' }}
                         >
-                          {f.coefficient >= 0
-                            ? `+${Math.abs(f.coefficient).toFixed(1)}x premium`
-                            : `\u2212${Math.abs(f.coefficient).toFixed(1)}x discount`}
+                          {f.type === 'continuous'
+                            ? `${f.coefficient >= 0 ? '+' : '\u2212'}${Math.abs(f.coefficient).toFixed(2)}x per unit`
+                            : f.coefficient >= 0
+                              ? `+${Math.abs(f.coefficient).toFixed(1)}x premium`
+                              : `\u2212${Math.abs(f.coefficient).toFixed(1)}x discount`}
                         </td>
                       </tr>
                     ))}

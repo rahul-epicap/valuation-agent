@@ -29,6 +29,8 @@ METRIC_LABELS: dict[str, str] = {
     "pEPS_GAAP": "P / GAAP EPS",
 }
 
+CONTINUOUS_FACTORS: set[str] = {"GROSS_MARGIN"}
+
 
 def _resolve_eps_keys(metric_type: str, d: dict) -> tuple[str, str]:
     """Resolve per-ticker multiple/growth keys based on epsMarketType.
@@ -171,18 +173,44 @@ def filter_points_multi_factor(
         return base_pts
 
     idx_map = indices_map or data.get("indices", {})
+    index_factors = [f for f in active_factors if f not in CONTINUOUS_FACTORS]
+    has_gm = "GROSS_MARGIN" in active_factors
 
     enriched: list[dict] = []
     for pt in base_pts:
-        ticker_indices = set(idx_map.get(pt["t"], []))
-        enriched.append(
-            {
-                **pt,
-                "factorValues": {
-                    f: (1 if f in ticker_indices else 0) for f in active_factors
-                },
-            }
-        )
+        fv: dict[str, float] = {}
+
+        # Index dummies
+        if index_factors:
+            ticker_indices = set(idx_map.get(pt["t"], []))
+            for f in index_factors:
+                fv[f] = 1 if f in ticker_indices else 0
+
+        # Gross margin: er / eg = (EV/Rev) / (EV/GP) = GP/Rev
+        if has_gm:
+            d = data["fm"].get(pt["t"], {})
+            er_arr = d.get("er", [])
+            eg_arr = d.get("eg", [])
+            er = er_arr[di] if di < len(er_arr) else None
+            eg = eg_arr[di] if di < len(eg_arr) else None
+            if er is not None and eg is not None and eg > 0:
+                fv["GROSS_MARGIN"] = er / eg
+            else:
+                fv["GROSS_MARGIN"] = float("nan")
+
+        enriched.append({**pt, "factorValues": fv})
+
+    # Mean-impute missing gross margin
+    if has_gm:
+        valid_gm = [
+            p["factorValues"]["GROSS_MARGIN"]
+            for p in enriched
+            if not math.isnan(p["factorValues"]["GROSS_MARGIN"])
+        ]
+        mean_gm = sum(valid_gm) / len(valid_gm) if valid_gm else 0.0
+        for p in enriched:
+            if math.isnan(p["factorValues"]["GROSS_MARGIN"]):
+                p["factorValues"]["GROSS_MARGIN"] = mean_gm
 
     return enriched
 
@@ -247,7 +275,11 @@ def multi_factor_ols(
     adjusted_r2 = float(1 - ((1 - r2) * (n - 1)) / (n - p)) if sst > 0 else 0.0
 
     factors = [
-        {"name": name, "type": "binary", "coefficient": float(beta[i + 2])}
+        {
+            "name": name,
+            "type": "continuous" if name in CONTINUOUS_FACTORS else "binary",
+            "coefficient": float(beta[i + 2]),
+        }
         for i, name in enumerate(kept_names)
     ]
 

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { DashboardData } from '../lib/types';
+import { CONTINUOUS_FACTORS } from '../lib/filters';
 import { Action, DashboardState } from '../hooks/useDashboardState';
 
 interface FactorSelectorProps {
@@ -137,6 +138,37 @@ export default function FactorSelector({ data, state, allIndices, dispatch }: Fa
             >
               Clear
             </button>
+          </div>
+
+          {/* Continuous factors */}
+          <div className="flex gap-1 mb-1.5 flex-wrap">
+            <span style={{ fontSize: '8.5px', color: 'var(--t3)', fontWeight: 600 }}>
+              Continuous:
+            </span>
+            {Object.entries(CONTINUOUS_FACTORS).map(([key, label]) => {
+              const active = state.regFactors.has(key);
+              return (
+                <div
+                  key={key}
+                  onClick={() => dispatch({ type: 'TOGGLE_REG_FACTOR', payload: key })}
+                  className="cursor-pointer select-none transition-all"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '2px 6px',
+                    borderRadius: '3px',
+                    fontSize: '10px',
+                    fontWeight: active ? 600 : 500,
+                    border: `1px solid ${active ? '#10b981' : 'var(--brd)'}`,
+                    background: active ? '#10b981' : 'var(--bg2)',
+                    color: active ? '#fff' : 'var(--t2)',
+                  }}
+                >
+                  {label}
+                </div>
+              );
+            })}
           </div>
 
           <input
