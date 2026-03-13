@@ -7,12 +7,13 @@ interface MetricToggleProps {
   onChange: (type: MetricType) => void;
 }
 
-const TYPES: MetricType[] = ['evRev', 'evGP', 'pEPS'];
+const TYPES: MetricType[] = ['evRev', 'evGP', 'pEPS', 'pEPS_GAAP'];
 
 const ACTIVE_CLASSES: Record<MetricType, string> = {
   evRev: 'bg-blue-500 text-white',
   evGP: 'bg-amber-500 text-black',
   pEPS: 'bg-emerald-500 text-black',
+  pEPS_GAAP: 'bg-violet-500 text-white',
 };
 
 export default function MetricToggle({ active, onChange }: MetricToggleProps) {

@@ -1,4 +1,4 @@
-import { DashboardData, MetricType, ScatterPoint, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
+import { DashboardData, MetricType, MetricArrayKey, ScatterPoint, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
 
 export function getActiveTickers(
   data: DashboardData,
@@ -19,12 +19,38 @@ export function getActiveTickers(
   });
 }
 
+/**
+ * Resolve the effective multiple and growth keys for a ticker.
+ *
+ * For pEPS, if the ticker's epsMarketType is 'GAAP', use the GAAP keys
+ * so the scatter chart plots each ticker on its native EPS basis.
+ * For pEPS_GAAP, always use GAAP keys regardless of epsMarketType.
+ */
+export function resolveEpsKeys(
+  type: MetricType,
+  d: TickerMetrics,
+): { mk: MetricArrayKey; gk: MetricArrayKey } {
+  if (type === 'pEPS' && d.epsMarketType === 'GAAP') {
+    return { mk: 'pe_gaap', gk: 'xg_gaap' };
+  }
+  return { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
+}
+
 export function okEps(
   data: DashboardData,
   ticker: string,
-  dateIndex: number
+  dateIndex: number,
+  type: MetricType = 'pEPS'
 ): boolean {
   const d = data.fm[ticker];
+  const useGaap = type === 'pEPS_GAAP' || (type === 'pEPS' && d.epsMarketType === 'GAAP');
+  if (useGaap) {
+    const fe = d.fe_gaap?.[dateIndex];
+    const xg = d.xg_gaap?.[dateIndex];
+    if (fe == null || fe <= 0.5) return false;
+    if (xg == null || xg <= -0.75 || xg > 2.0) return false;
+    return true;
+  }
   const fe = d.fe[dateIndex];
   const xg = d.xg[dateIndex];
   if (fe == null || fe <= 0.5) return false;
@@ -42,18 +68,22 @@ export function filterPoints(
   epsGrMin: number | null,
   epsGrMax: number | null
 ): ScatterPoint[] {
-  const mk = MULTIPLE_KEYS[type];
-  const gk = GROWTH_KEYS[type];
+  const isEps = type === 'pEPS' || type === 'pEPS_GAAP';
   const pts: ScatterPoint[] = [];
 
   for (const t of tickers) {
     const d = data.fm[t];
     if (!d) continue;
-    const m = d[mk][dateIndex];
-    const g = d[gk][dateIndex];
+    // Resolve keys — for pEPS, per-ticker based on epsMarketType
+    const { mk, gk } = isEps ? resolveEpsKeys(type, d) : { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
+    const mArr = d[mk];
+    const gArr = d[gk];
+    if (!mArr || !gArr) continue;
+    const m = mArr[dateIndex];
+    const g = gArr[dateIndex];
     if (m == null || g == null) continue;
-    if (type === 'pEPS') {
-      if (!okEps(data, t, dateIndex)) continue;
+    if (isEps) {
+      if (!okEps(data, t, dateIndex, type)) continue;
       if (m > 200) continue;
     }
     if (type === 'evRev' && m > 80) continue;
@@ -88,16 +118,19 @@ export function filterMultiples(
   epsGrMin: number | null,
   epsGrMax: number | null
 ): number[] {
-  const mk = MULTIPLE_KEYS[type];
+  const isEps = type === 'pEPS' || type === 'pEPS_GAAP';
   const vals: number[] = [];
 
   for (const t of tickers) {
     const d = data.fm[t];
     if (!d) continue;
-    const m = d[mk][dateIndex];
+    const { mk } = isEps ? resolveEpsKeys(type, d) : { mk: MULTIPLE_KEYS[type] };
+    const mArr = d[mk];
+    if (!mArr) continue;
+    const m = mArr[dateIndex];
     if (m == null) continue;
-    if (type === 'pEPS') {
-      if (!okEps(data, t, dateIndex)) continue;
+    if (isEps) {
+      if (!okEps(data, t, dateIndex, type)) continue;
       if (m > 200) continue;
     }
     if (type === 'evRev' && (m > 80 || m < 0)) continue;

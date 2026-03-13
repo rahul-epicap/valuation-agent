@@ -8,13 +8,36 @@ from __future__ import annotations
 
 import math
 
-MULTIPLE_KEYS: dict[str, str] = {"evRev": "er", "evGP": "eg", "pEPS": "pe"}
-GROWTH_KEYS: dict[str, str] = {"evRev": "rg", "evGP": "rg", "pEPS": "xg"}
+MULTIPLE_KEYS: dict[str, str] = {
+    "evRev": "er",
+    "evGP": "eg",
+    "pEPS": "pe",
+    "pEPS_GAAP": "pe_gaap",
+}
+GROWTH_KEYS: dict[str, str] = {
+    "evRev": "rg",
+    "evGP": "rg",
+    "pEPS": "xg",
+    "pEPS_GAAP": "xg_gaap",
+}
 METRIC_LABELS: dict[str, str] = {
     "evRev": "EV / Revenue",
     "evGP": "EV / Gross Profit",
     "pEPS": "Price / EPS",
+    "pEPS_GAAP": "P / GAAP EPS",
 }
+
+
+def _resolve_eps_keys(metric_type: str, d: dict) -> tuple[str, str]:
+    """Resolve per-ticker multiple/growth keys based on epsMarketType.
+
+    For pEPS, if the ticker's epsMarketType is 'GAAP', use pe_gaap/xg_gaap
+    so regressions plot each ticker on its native EPS basis.
+    For pEPS_GAAP, always use GAAP keys regardless of epsMarketType.
+    """
+    if metric_type == "pEPS" and d.get("epsMarketType") == "GAAP":
+        return "pe_gaap", "xg_gaap"
+    return MULTIPLE_KEYS[metric_type], GROWTH_KEYS[metric_type]
 
 
 # ---------------------------------------------------------------------------
@@ -56,11 +79,20 @@ def linear_regression(
 # ---------------------------------------------------------------------------
 # 2. EPS quality check
 # ---------------------------------------------------------------------------
-def ok_eps(data: dict, ticker: str, di: int) -> bool:
+def ok_eps(data: dict, ticker: str, di: int, metric_type: str = "pEPS") -> bool:
     """Port of filters.ts okEps. Checks forward EPS > 0.5 and EPS growth bounds."""
     d = data["fm"][ticker]
-    fe = d["fe"][di]
-    xg = d["xg"][di]
+    use_gaap = metric_type == "pEPS_GAAP" or (
+        metric_type == "pEPS" and d.get("epsMarketType") == "GAAP"
+    )
+    if use_gaap:
+        fe_arr = d.get("fe_gaap", [])
+        xg_arr = d.get("xg_gaap", [])
+        fe = fe_arr[di] if di < len(fe_arr) else None
+        xg = xg_arr[di] if di < len(xg_arr) else None
+    else:
+        fe = d["fe"][di]
+        xg = d["xg"][di]
     if fe is None or fe <= 0.5:
         return False
     if xg is None or xg <= -0.75 or xg > 2.0:
@@ -81,21 +113,28 @@ def filter_points(
 
     Returns [{x: growth%, y: multiple, t: ticker}, ...].
     """
-    mk = MULTIPLE_KEYS[metric_type]
-    gk = GROWTH_KEYS[metric_type]
+    is_eps = metric_type in ("pEPS", "pEPS_GAAP")
     pts: list[dict] = []
 
     for t in tickers:
         d = data["fm"].get(t)
         if d is None:
             continue
-        m = d[mk][di]
-        g = d[gk][di]
+        # Per-ticker key resolution based on epsMarketType
+        mk, gk = (
+            _resolve_eps_keys(metric_type, d)
+            if is_eps
+            else (MULTIPLE_KEYS[metric_type], GROWTH_KEYS[metric_type])
+        )
+        m_arr = d.get(mk, [])
+        g_arr = d.get(gk, [])
+        m = m_arr[di] if di < len(m_arr) else None
+        g = g_arr[di] if di < len(g_arr) else None
         if m is None or g is None:
             continue
 
-        if metric_type == "pEPS":
-            if not ok_eps(data, t, di):
+        if is_eps:
+            if not ok_eps(data, t, di, metric_type):
                 continue
             if m > 200:
                 continue
@@ -120,19 +159,26 @@ def filter_multiples(
     tickers: list[str],
 ) -> list[float]:
     """Port of filters.ts filterMultiples. Returns sorted valid multiples."""
-    mk = MULTIPLE_KEYS[metric_type]
+    is_eps = metric_type in ("pEPS", "pEPS_GAAP")
     vals: list[float] = []
 
     for t in tickers:
         d = data["fm"].get(t)
         if d is None:
             continue
-        m = d[mk][di]
+        # Per-ticker key resolution based on epsMarketType
+        mk = (
+            _resolve_eps_keys(metric_type, d)[0]
+            if is_eps
+            else MULTIPLE_KEYS[metric_type]
+        )
+        m_arr = d.get(mk, [])
+        m = m_arr[di] if di < len(m_arr) else None
         if m is None:
             continue
 
-        if metric_type == "pEPS":
-            if not ok_eps(data, t, di):
+        if is_eps:
+            if not ok_eps(data, t, di, metric_type):
                 continue
             if m > 200:
                 continue
@@ -413,6 +459,7 @@ def compute_valuation_estimate(
     dcf_discount_rate: float = 0.10,
     dcf_terminal_growth: float = 0.0,
     dcf_fade_period: int = 5,
+    eps_growth_gaap: float | None = None,
 ) -> dict:
     """Compute regression-implied multiples, DCF, and peer context.
 
@@ -426,6 +473,7 @@ def compute_valuation_estimate(
         "er": current_ev_revenue,
         "eg": current_ev_gp,
         "pe": current_pe,
+        "pe_gaap": None,
     }
     industry: str | None = None
 
@@ -450,15 +498,32 @@ def compute_valuation_estimate(
             eg_val = fm["eg"][latest_di]
             if eg_val is not None:
                 ticker_actuals["eg"] = float(eg_val)
+        # GAAP P/E
+        pe_gaap_arr = fm.get("pe_gaap", [])
+        if latest_di < len(pe_gaap_arr) and pe_gaap_arr[latest_di] is not None:
+            ticker_actuals["pe_gaap"] = float(pe_gaap_arr[latest_di])
+
+    # Determine GAAP EPS growth to use for regression input
+    _eps_growth_gaap = eps_growth_gaap if eps_growth_gaap is not None else eps_growth
 
     # ---- Regression predictions for each metric type ----
-    metric_types = ["evRev", "evGP", "pEPS"]
+    metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
     regression_results: list[dict] = []
 
     for mt in metric_types:
-        mk = MULTIPLE_KEYS[mt]
-        gk = GROWTH_KEYS[mt]
-        growth_rate = revenue_growth if gk == "rg" else eps_growth
+        # Resolve per-ticker keys for pEPS based on epsMarketType
+        if mt in ("pEPS", "pEPS_GAAP") and ticker and ticker in data["fm"]:
+            mk, gk = _resolve_eps_keys(mt, data["fm"][ticker])
+        else:
+            mk = MULTIPLE_KEYS[mt]
+            gk = GROWTH_KEYS[mt]
+
+        if gk == "rg":
+            growth_rate = revenue_growth
+        elif gk == "xg_gaap":
+            growth_rate = _eps_growth_gaap
+        else:
+            growth_rate = eps_growth
         growth_pct = growth_rate * 100
 
         # Historical baseline
@@ -489,7 +554,7 @@ def compute_valuation_estimate(
                 "n": spot["n"],
             }
 
-        # Actual multiple for ticker
+        # Actual multiple for ticker (use resolved key)
         actual = ticker_actuals.get(mk)
 
         # Deviation %
@@ -552,8 +617,12 @@ def compute_valuation_estimate(
     # ---- Peer context (full universe) ----
     peer_context: list[dict] = []
     for mt in metric_types:
-        mk = MULTIPLE_KEYS[mt]
-        tv = ticker_actuals.get(mk)
+        # Use resolved key for ticker_actuals lookup
+        if mt in ("pEPS", "pEPS_GAAP") and ticker and ticker in data["fm"]:
+            resolved_mk = _resolve_eps_keys(mt, data["fm"][ticker])[0]
+        else:
+            resolved_mk = MULTIPLE_KEYS[mt]
+        tv = ticker_actuals.get(resolved_mk)
         stats = compute_peer_stats(data, mt, latest_di, all_tickers, tv)
         stats["metric_type"] = mt
         stats["metric_label"] = METRIC_LABELS[mt]
@@ -567,8 +636,11 @@ def compute_valuation_estimate(
         ]
         industry_context = []
         for mt in metric_types:
-            mk = MULTIPLE_KEYS[mt]
-            tv = ticker_actuals.get(mk)
+            if mt in ("pEPS", "pEPS_GAAP") and ticker in data["fm"]:
+                resolved_mk = _resolve_eps_keys(mt, data["fm"][ticker])[0]
+            else:
+                resolved_mk = MULTIPLE_KEYS[mt]
+            tv = ticker_actuals.get(resolved_mk)
             stats = compute_peer_stats(data, mt, latest_di, ind_tickers, tv)
             stats["metric_type"] = mt
             stats["metric_label"] = METRIC_LABELS[mt]
@@ -664,7 +736,7 @@ def compute_peer_valuation(
     Returns comprehensive result dict.
     """
     latest_di = len(data["dates"]) - 1
-    metric_types = ["evRev", "evGP", "pEPS"]
+    metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
 
     # Build peer ticker list
     peer_tickers = [p["ticker"] for p in similar_tickers if p["ticker"] in data["fm"]]
@@ -768,11 +840,13 @@ def compute_peer_valuation(
     composite: list[dict] = []
     historical_composite: list[dict] = []
     for mt in metric_types:
-        # Get actual multiple for deviation
-        mk = MULTIPLE_KEYS[mt]
+        # Get actual multiple for deviation (per-ticker EPS key resolution)
         actual: float | None = None
         if ticker in data["fm"]:
-            vals = data["fm"][ticker].get(mk, [])
+            td = data["fm"][ticker]
+            is_eps = mt in ("pEPS", "pEPS_GAAP")
+            mk = _resolve_eps_keys(mt, td)[0] if is_eps else MULTIPLE_KEYS[mt]
+            vals = td.get(mk, [])
             if latest_di < len(vals) and vals[latest_di] is not None:
                 actual = float(vals[latest_di])
 
@@ -849,10 +923,13 @@ def compute_peer_valuation(
     # Peer stats on just the similar-stock subset
     peer_stats: list[dict] = []
     for mt in metric_types:
-        mk = MULTIPLE_KEYS[mt]
+        is_eps = mt in ("pEPS", "pEPS_GAAP")
         tv: float | None = None
         if ticker in data["fm"]:
-            val = data["fm"][ticker][mk][latest_di]
+            td = data["fm"][ticker]
+            mk = _resolve_eps_keys(mt, td)[0] if is_eps else MULTIPLE_KEYS[mt]
+            vals_arr = td.get(mk, [])
+            val = vals_arr[latest_di] if latest_di < len(vals_arr) else None
             if val is not None:
                 tv = float(val)
         stats = compute_peer_stats(data, mt, latest_di, peer_tickers, tv)
