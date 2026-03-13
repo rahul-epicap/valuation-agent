@@ -12,10 +12,11 @@ import {
   Legend,
   Filler,
 } from 'chart.js';
-import { DashboardData, COLORS } from '../lib/types';
+import { DashboardData, COLORS, MultiFactorScatterPoint } from '../lib/types';
 import { Action, DashboardState } from '../hooks/useDashboardState';
-import { getActiveTickers, filterPoints, percentile } from '../lib/filters';
+import { getActiveTickers, filterPoints, filterPointsMultiFactor, percentile } from '../lib/filters';
 import { linearRegressionCooks } from '../lib/regression';
+import { multiFactorOLS } from '../lib/multiFactorRegression';
 import MetricToggle from './MetricToggle';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
@@ -38,6 +39,9 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
     [data, state.exTk, state.indOn, state.idxOn]
   );
 
+  const mfActive = state.mfEnabled && state.regFactors.size > 0;
+  const regFactorArray = useMemo(() => [...state.regFactors], [state.regFactors]);
+
   const slopes = useMemo(() => {
     const result: (number | null)[] = [];
     for (let di = startDi; di <= endDi; di++) {
@@ -52,8 +56,34 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
     return result;
   }, [data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, startDi, endDi]);
 
+  const mfSlopes = useMemo(() => {
+    if (!mfActive) return null;
+    const result: (number | null)[] = [];
+    for (let di = startDi; di <= endDi; di++) {
+      const pts = filterPointsMultiFactor(data, type, di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, regFactorArray);
+      if (pts.length < 5) {
+        result.push(null);
+        continue;
+      }
+      const mfPts = pts as MultiFactorScatterPoint[];
+      const y = mfPts.map((p) => p.y);
+      const X = mfPts.map((p) => {
+        const row = [1, p.x];
+        for (const factor of regFactorArray) {
+          row.push(p.factorValues?.[factor] ?? 0);
+        }
+        return row;
+      });
+      const mfReg = multiFactorOLS(y, X, regFactorArray);
+      result.push(mfReg ? +mfReg.growthCoefficient.toFixed(6) : null);
+    }
+    return result;
+  }, [mfActive, data, type, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, startDi, endDi, regFactorArray]);
+
+  const primarySlopes = mfActive && mfSlopes ? mfSlopes : slopes;
+
   const percentileDatasets = useMemo(() => {
-    const valid = slopes.filter((v): v is number => v != null);
+    const valid = primarySlopes.filter((v): v is number => v != null);
     if (valid.length < 4) return [];
     const sorted = [...valid].sort((a, b) => a - b);
     const p25 = percentile(sorted, 0.25);
@@ -95,7 +125,7 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
         order: 4,
       },
     ];
-  }, [slopes, startDi, endDi]);
+  }, [primarySlopes, startDi, endDi]);
 
   const options: Record<string, unknown> = {
     responsive: true,
@@ -132,7 +162,7 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
         ticks: { maxTicksLimit: 14, font: { size: 9.5 } },
       },
       y: {
-        title: { display: true, text: 'Regression Slope', font: { weight: '600' } },
+        title: { display: true, text: mfActive ? 'Growth Coefficient' : 'Regression Slope', font: { weight: '600' } },
         grid: { color: 'rgba(28,40,66,.25)' },
       },
     },
@@ -144,14 +174,27 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
 
   const datasets = [
     {
-      label: 'Slope',
-      data: slopes,
+      label: mfActive ? 'Growth Coefficient' : 'Slope',
+      data: primarySlopes,
       borderColor: col.m,
       backgroundColor: col.b,
       fill: { target: 'origin', above: col.m + '12' },
       pointBackgroundColor: col.m,
       order: 1,
     },
+    // Overlay single-factor slope as comparison when in multi-factor mode
+    ...(mfActive && mfSlopes ? [{
+      label: 'Single-Factor Slope',
+      data: slopes,
+      borderColor: 'rgba(136,146,166,.5)',
+      backgroundColor: 'transparent',
+      borderDash: [6, 3] as number[],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 3,
+      fill: false,
+      order: 2,
+    }] : []),
     ...percentileDatasets,
   ];
 
@@ -160,10 +203,10 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
           <div className="font-bold" style={{ fontSize: '13.5px', letterSpacing: '-0.2px' }}>
-            Regression Slope Over Time
+            {mfActive ? 'Growth Coefficient Over Time' : 'Regression Slope Over Time'}
           </div>
           <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '1px' }}>
-            Slope trend — responds to all filters
+            {mfActive ? 'Multi-factor growth coefficient — single-factor slope shown as dashed line' : 'Slope trend — responds to all filters'}
           </div>
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_SLP', payload: t })} />

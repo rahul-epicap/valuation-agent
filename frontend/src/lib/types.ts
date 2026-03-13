@@ -150,6 +150,27 @@ export interface IndexInfo {
   latest_as_of_date: string | null;
 }
 
+export interface RegressionFactor {
+  name: string;
+  type: 'binary' | 'continuous';
+  coefficient: number;
+}
+
+export interface MultiFactorRegressionResult {
+  intercept: number;
+  growthCoefficient: number;
+  factors: RegressionFactor[];
+  r2: number;
+  adjustedR2: number;
+  n: number;
+  p: number;
+}
+
+export interface MultiFactorScatterPoint extends ScatterPoint {
+  factorValues?: Record<string, number>;
+  adjustedY?: number;
+}
+
 export interface PeerSearchResult {
   ticker: string;
   score: number;

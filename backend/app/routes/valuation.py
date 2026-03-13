@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
-from app.services.valuation_service import compute_valuation_estimate
+from app.services.valuation_service import (
+    compute_valuation_estimate,
+    compute_spot_regression_multi_factor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,11 @@ class ValuationEstimateRequest(BaseModel):
     )
     current_price: float | None = Field(
         default=None, gt=0, description="Current stock price for upside calculation"
+    )
+    regression_factors: list[str] | None = Field(
+        default=None,
+        max_length=50,
+        description="Index names to use as dummy regression factors (e.g. ['SPX', 'MSXXTECH'])",
     )
 
 
@@ -150,6 +158,17 @@ class ForwardTargetResult(BaseModel):
     dcf_upside_pct: float | None = None
 
 
+class MultiFactorResult(BaseModel):
+    metric_type: str
+    intercept: float
+    growth_coefficient: float
+    factors: list[dict]
+    r2: float
+    adjusted_r2: float
+    n: int
+    p: int
+
+
 class ValuationEstimateResponse(BaseModel):
     ticker: str | None = None
     industry: str | None = None
@@ -161,6 +180,7 @@ class ValuationEstimateResponse(BaseModel):
     peer_context: list[PeerStats]
     industry_context: list[IndustryStats] | None = None
     forward_targets: list[ForwardTargetResult] | None = None
+    multi_factor_results: list[MultiFactorResult] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +253,21 @@ async def valuation_estimate(
             detail=f"Valuation computation failed: {exc}",
         ) from exc
 
-    # 4. Attach snapshot metadata
+    # 4. Multi-factor regression (if factors requested)
+    if body.regression_factors:
+        all_tickers = data["tickers"]
+        latest_di = len(data["dates"]) - 1
+        metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
+        mf_results = []
+        for mt in metric_types:
+            mf = compute_spot_regression_multi_factor(
+                data, mt, latest_di, all_tickers, body.regression_factors
+            )
+            if mf:
+                mf_results.append({"metric_type": mt, **mf})
+        result_dict["multi_factor_results"] = mf_results if mf_results else None
+
+    # 5. Attach snapshot metadata
     result_dict["snapshot_id"] = snapshot.id
     result_dict["snapshot_date"] = (
         snapshot.created_at.isoformat() if snapshot.created_at else None

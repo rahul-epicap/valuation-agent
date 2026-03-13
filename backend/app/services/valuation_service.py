@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 MULTIPLE_KEYS: dict[str, str] = {
     "evRev": "er",
     "evGP": "eg",
@@ -147,6 +149,186 @@ def filter_points(
         pts.append({"x": g_pct, "y": m, "t": t})
 
     return pts
+
+
+# ---------------------------------------------------------------------------
+# 3b. Multi-factor filter: enrich scatter points with factor dummy values
+# ---------------------------------------------------------------------------
+def filter_points_multi_factor(
+    data: dict,
+    metric_type: str,
+    di: int,
+    tickers: list[str],
+    active_factors: list[str],
+    indices_map: dict[str, list[str]] | None = None,
+) -> list[dict]:
+    """Reuses filter_points, then attaches factorValues for each point.
+
+    indices_map: {ticker: [index_short_names]} — if None, uses data['indices'].
+    """
+    base_pts = filter_points(data, metric_type, di, tickers)
+    if not active_factors:
+        return base_pts
+
+    idx_map = indices_map or data.get("indices", {})
+
+    for pt in base_pts:
+        ticker_indices = set(idx_map.get(pt["t"], []))
+        pt["factorValues"] = {
+            f: (1 if f in ticker_indices else 0) for f in active_factors
+        }
+
+    return base_pts
+
+
+# ---------------------------------------------------------------------------
+# 3c. Multi-factor OLS regression via NumPy
+# ---------------------------------------------------------------------------
+def multi_factor_ols(
+    y: list[float],
+    X: list[list[float]],
+    factor_names: list[str],
+) -> dict | None:
+    """Multi-factor OLS using NumPy lstsq.
+
+    X columns: [0]=intercept, [1]=growth%, [2+]=factor dummies.
+    Drops factors with < 3 members or zero variance before solving.
+
+    Returns dict with intercept, growth_coefficient, factors, r2, adjusted_r2, n, p.
+    """
+    n = len(y)
+    if n < 3:
+        return None
+
+    X_arr = np.array(X, dtype=np.float64)
+    y_arr = np.array(y, dtype=np.float64)
+
+    # Filter factors: keep only columns with >= 3 non-zero and non-zero variance
+    kept_indices: list[int] = []
+    kept_names: list[str] = []
+    for i, name in enumerate(factor_names):
+        col_idx = i + 2
+        col = X_arr[:, col_idx]
+        if np.count_nonzero(col) < 3:
+            continue
+        if np.var(col) < 1e-12:
+            continue
+        kept_indices.append(i)
+        kept_names.append(name)
+
+    # Build filtered X: intercept + growth + kept factors
+    cols = [X_arr[:, 0], X_arr[:, 1]]
+    for i in kept_indices:
+        cols.append(X_arr[:, i + 2])
+    Xf = np.column_stack(cols)
+
+    p = Xf.shape[1]
+    if n <= p:
+        return None
+
+    # Solve via lstsq
+    beta, residuals, rank, sv = np.linalg.lstsq(Xf, y_arr, rcond=None)
+    if rank < p:
+        return None
+
+    # Compute R² and adjusted R²
+    y_mean = np.mean(y_arr)
+    sst = np.sum((y_arr - y_mean) ** 2)
+    y_pred = Xf @ beta
+    sse = np.sum((y_arr - y_pred) ** 2)
+
+    r2 = float(1 - sse / sst) if sst > 0 else 0.0
+    adjusted_r2 = float(1 - ((1 - r2) * (n - 1)) / (n - p)) if sst > 0 else 0.0
+
+    factors = [
+        {"name": name, "type": "binary", "coefficient": float(beta[i + 2])}
+        for i, name in enumerate(kept_names)
+    ]
+
+    return {
+        "intercept": float(beta[0]),
+        "growth_coefficient": float(beta[1]),
+        "factors": factors,
+        "r2": r2,
+        "adjusted_r2": adjusted_r2,
+        "n": n,
+        "p": p,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 3d. Spot regression with multi-factor support
+# ---------------------------------------------------------------------------
+def compute_spot_regression_multi_factor(
+    data: dict,
+    metric_type: str,
+    di: int,
+    tickers: list[str],
+    active_factors: list[str],
+    indices_map: dict[str, list[str]] | None = None,
+) -> dict | None:
+    """Run multi-factor OLS at a single date."""
+    pts = filter_points_multi_factor(
+        data, metric_type, di, tickers, active_factors, indices_map
+    )
+    if len(pts) < 3:
+        return None
+
+    y = [p["y"] for p in pts]
+    X = []
+    for p in pts:
+        row = [1.0, p["x"]]
+        fv = p.get("factorValues", {})
+        for f in active_factors:
+            row.append(float(fv.get(f, 0)))
+        X.append(row)
+
+    return multi_factor_ols(y, X, active_factors)
+
+
+# ---------------------------------------------------------------------------
+# 3e. Historical baseline with multi-factor support
+# ---------------------------------------------------------------------------
+def compute_historical_baseline_multi_factor(
+    data: dict,
+    metric_type: str,
+    tickers: list[str],
+    active_factors: list[str],
+    indices_map: dict[str, list[str]] | None = None,
+) -> dict | None:
+    """Average multi-factor regression across all dates."""
+    total_growth_coeff = 0.0
+    total_intercept = 0.0
+    total_r2 = 0.0
+    total_adj_r2 = 0.0
+    total_n = 0.0
+    period_count = 0
+
+    for di in range(len(data["dates"])):
+        reg = compute_spot_regression_multi_factor(
+            data, metric_type, di, tickers, active_factors, indices_map
+        )
+        if reg is None:
+            continue
+
+        total_growth_coeff += reg["growth_coefficient"]
+        total_intercept += reg["intercept"]
+        total_r2 += reg["r2"]
+        total_adj_r2 += reg["adjusted_r2"]
+        total_n += reg["n"]
+        period_count += 1
+
+    if period_count < 1:
+        return None
+
+    return {
+        "avg_growth_coefficient": total_growth_coeff / period_count,
+        "avg_intercept": total_intercept / period_count,
+        "avg_r2": total_r2 / period_count,
+        "avg_adjusted_r2": total_adj_r2 / period_count,
+        "avg_n": total_n / period_count,
+        "period_count": period_count,
+    }
 
 
 # ---------------------------------------------------------------------------
