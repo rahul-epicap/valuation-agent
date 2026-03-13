@@ -1,4 +1,4 @@
-import { DashboardData, MetricType, MetricArrayKey, ScatterPoint, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
+import { DashboardData, MetricType, MetricArrayKey, ScatterPoint, MultiFactorScatterPoint, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
 
 export function getActiveTickers(
   data: DashboardData,
@@ -152,6 +152,37 @@ export function filterMultiples(
     vals.push(m as number);
   }
   return vals;
+}
+
+/**
+ * Enriches filterPoints output with per-ticker factor dummy values.
+ * Reuses all existing filter logic, then attaches factorValues for each point.
+ */
+export function filterPointsMultiFactor(
+  data: DashboardData,
+  type: MetricType,
+  dateIndex: number,
+  tickers: string[],
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null,
+  regressionFactors: string[],
+): MultiFactorScatterPoint[] {
+  const basePts = filterPoints(data, type, dateIndex, tickers, revGrMin, revGrMax, epsGrMin, epsGrMax);
+  if (!data.indices || regressionFactors.length === 0) {
+    return basePts;
+  }
+
+  return basePts.map((pt) => {
+    const tickerIndices = data.indices![pt.t] || [];
+    const tickerIndexSet = new Set(tickerIndices);
+    const factorValues: Record<string, number> = {};
+    for (const factor of regressionFactors) {
+      factorValues[factor] = tickerIndexSet.has(factor) ? 1 : 0;
+    }
+    return { ...pt, factorValues };
+  });
 }
 
 export function percentile(sorted: number[], p: number): number {

@@ -24,6 +24,14 @@ This file defines the strict rules, workflows, and context you must follow when 
 * **Build Frontend:** `cd frontend && npm run build`
 * **Type Check:** `cd frontend && npm run typecheck`
 
+### Railway CLI
+The project is deployed on Railway. The CLI (`railway`) is installed at `/opt/homebrew/bin/railway`.
+* **Check status:** `railway status` — shows project, environment, service
+* **View logs:** `railway logs -n <lines>` — tail recent deploy/runtime logs
+* **Check deployments:** `railway up` — trigger a manual deploy
+* Deploys trigger automatically on push to `main` via GitHub integration
+* The linked project is **EVE**, environment **production**, service **valuation-dashboard**
+
 ---
 
 ## 2. Interaction Workflow
