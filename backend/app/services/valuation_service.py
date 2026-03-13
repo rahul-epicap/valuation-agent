@@ -460,6 +460,8 @@ def compute_valuation_estimate(
     dcf_terminal_growth: float = 0.0,
     dcf_fade_period: int = 5,
     eps_growth_gaap: float | None = None,
+    forward_targets: list[dict] | None = None,
+    current_price: float | None = None,
 ) -> dict:
     """Compute regression-implied multiples, DCF, and peer context.
 
@@ -647,6 +649,18 @@ def compute_valuation_estimate(
             stats["industry"] = industry
             industry_context.append(stats)
 
+    # ---- Forward price targets ----
+    forward_target_results: list[dict] | None = None
+    if forward_targets:
+        forward_target_results = compute_forward_targets(
+            data=data,
+            targets=forward_targets,
+            current_price=current_price,
+            dcf_discount_rate=dcf_discount_rate,
+            dcf_terminal_growth=dcf_terminal_growth,
+            dcf_fade_period=dcf_fade_period,
+        )
+
     return {
         "ticker": ticker,
         "industry": industry,
@@ -655,11 +669,159 @@ def compute_valuation_estimate(
         "dcf": dcf_result,
         "peer_context": peer_context,
         "industry_context": industry_context,
+        "forward_targets": forward_target_results,
     }
 
 
 # ---------------------------------------------------------------------------
-# 13. Index-based regression
+# 13. DCF at horizon (reuses compute_dcf for a future starting point)
+# ---------------------------------------------------------------------------
+def compute_dcf_at_horizon(
+    forward_eps_at_horizon: float,
+    eps_growth_at_horizon: float,
+    discount_rate: float = 0.10,
+    terminal_growth: float = 0.0,
+    fade_period: int = 5,
+) -> float | None:
+    """Compute DCF-implied P/E starting from a future horizon's EPS and growth.
+
+    Uses compute_dcf() with a single-year growth estimate (the horizon-year
+    growth rate), then fades to terminal.  Returns implied P/E or None.
+    """
+    result = compute_dcf(
+        forward_eps=forward_eps_at_horizon,
+        eps_growth_estimates=[eps_growth_at_horizon],
+        discount_rate=discount_rate,
+        terminal_growth=terminal_growth,
+        fade_period=fade_period,
+    )
+    if result is None:
+        return None
+    return result["implied_pe"]
+
+
+# ---------------------------------------------------------------------------
+# 14. Forward price targets
+# ---------------------------------------------------------------------------
+def compute_forward_targets(
+    data: dict,
+    targets: list[dict],
+    current_price: float | None = None,
+    dcf_discount_rate: float = 0.10,
+    dcf_terminal_growth: float = 0.0,
+    dcf_fade_period: int = 5,
+) -> list[dict]:
+    """Compute regression-implied and DCF target prices at future horizons.
+
+    For each target horizon:
+      1. Spot P/EPS regression (full universe, latest date)
+      2. Historical baseline P/EPS regression (avg across all dates)
+      3. DCF cross-check via compute_dcf_at_horizon()
+      4. target_price = implied_pe * forward_eps_at_horizon
+      5. upside_pct = (target_price / current_price - 1) * 100
+
+    Regressions are cached across targets (same universe-wide regression).
+    """
+    if not targets:
+        return []
+
+    all_tickers: list[str] = data["tickers"]
+    latest_di = len(data["dates"]) - 1
+
+    # Cache spot + historical P/EPS regressions (same for all horizons)
+    spot = compute_spot_regression(data, "pEPS", latest_di, all_tickers)
+    hist = compute_historical_baseline(data, "pEPS", all_tickers)
+
+    spot_stats: dict | None = None
+    if spot:
+        spot_stats = {
+            "slope": spot["slope"],
+            "intercept": spot["intercept"],
+            "r2": spot["r2"],
+            "n": spot["n"],
+        }
+
+    hist_stats: dict | None = None
+    if hist:
+        hist_stats = {
+            "slope": hist["avg_slope"],
+            "intercept": hist["avg_intercept"],
+            "r2": hist["avg_r2"],
+            "n": hist["avg_n"],
+        }
+
+    results: list[dict] = []
+    for t in targets:
+        horizon_years = t["horizon_years"]
+        eps_growth = t["eps_growth_at_horizon"]
+        fwd_eps = t["forward_eps_at_horizon"]
+        growth_pct = eps_growth * 100
+
+        # Spot regression-implied P/E
+        spot_pe: float | None = None
+        spot_target: float | None = None
+        if spot:
+            spot_pe = spot["slope"] * growth_pct + spot["intercept"]
+            if spot_pe is not None and spot_pe > 0:
+                spot_target = spot_pe * fwd_eps
+
+        # Historical regression-implied P/E
+        hist_pe: float | None = None
+        hist_target: float | None = None
+        if hist:
+            hist_pe = hist["avg_slope"] * growth_pct + hist["avg_intercept"]
+            if hist_pe is not None and hist_pe > 0:
+                hist_target = hist_pe * fwd_eps
+
+        # DCF cross-check
+        dcf_pe = compute_dcf_at_horizon(
+            forward_eps_at_horizon=fwd_eps,
+            eps_growth_at_horizon=eps_growth,
+            discount_rate=dcf_discount_rate,
+            terminal_growth=dcf_terminal_growth,
+            fade_period=dcf_fade_period,
+        )
+        dcf_target: float | None = None
+        if dcf_pe is not None and dcf_pe > 0:
+            dcf_target = dcf_pe * fwd_eps
+
+        # Upside calculations
+        spot_upside: float | None = None
+        hist_upside: float | None = None
+        dcf_upside: float | None = None
+        if current_price is not None and current_price > 0:
+            if spot_target is not None:
+                spot_upside = (spot_target / current_price - 1) * 100
+            if hist_target is not None:
+                hist_upside = (hist_target / current_price - 1) * 100
+            if dcf_target is not None:
+                dcf_upside = (dcf_target / current_price - 1) * 100
+
+        results.append(
+            {
+                "horizon_years": horizon_years,
+                "eps_growth_at_horizon_pct": growth_pct,
+                "forward_eps_at_horizon": fwd_eps,
+                "spot_implied_pe": spot_pe,
+                "spot_target_price": spot_target,
+                "spot_regression_stats": spot_stats,
+                "historical_implied_pe": hist_pe,
+                "historical_target_price": hist_target,
+                "historical_regression_stats": hist_stats,
+                "dcf_implied_pe": dcf_pe,
+                "dcf_target_price": dcf_target,
+                "current_price": current_price,
+                "spot_upside_pct": spot_upside,
+                "historical_upside_pct": hist_upside,
+                "dcf_upside_pct": dcf_upside,
+            }
+        )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 15. Index-based regression
 # ---------------------------------------------------------------------------
 def compute_index_regression(
     data: dict,
@@ -711,6 +873,8 @@ def compute_peer_valuation(
     dcf_discount_rate: float = 0.10,
     dcf_terminal_growth: float = 0.0,
     dcf_fade_period: int = 5,
+    forward_targets: list[dict] | None = None,
+    current_price: float | None = None,
 ) -> dict:
     """Orchestrate peer-based valuation with index regressions.
 
@@ -950,6 +1114,18 @@ def compute_peer_valuation(
             current_pe=current_pe,
         )
 
+    # Forward price targets
+    forward_target_results: list[dict] | None = None
+    if forward_targets:
+        forward_target_results = compute_forward_targets(
+            data=data,
+            targets=forward_targets,
+            current_price=current_price,
+            dcf_discount_rate=dcf_discount_rate,
+            dcf_terminal_growth=dcf_terminal_growth,
+            dcf_fade_period=dcf_fade_period,
+        )
+
     return {
         "ticker": ticker,
         "peer_count": len(peer_tickers),
@@ -959,4 +1135,5 @@ def compute_peer_valuation(
         "historical_composite_valuation": historical_composite,
         "peer_stats": peer_stats,
         "dcf": dcf_result,
+        "forward_targets": forward_target_results,
     }
