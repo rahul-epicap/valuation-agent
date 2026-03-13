@@ -4,6 +4,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -20,7 +21,8 @@ class Snapshot(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    dashboard_data = Column(JSONB, nullable=False)
+    dashboard_data = Column(JSONB, nullable=True)
+    dashboard_data_compressed = Column(LargeBinary, nullable=True)
     source_filename = Column(String(255))
     ticker_count = Column(Integer)
     date_count = Column(Integer)

@@ -1,5 +1,7 @@
+import gzip
 from datetime import datetime, timezone
 
+import orjson
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,10 +49,11 @@ async def upload_excel(
     date_count = len(dashboard_data.get("dates", []))
     industry_count = len(set(dashboard_data.get("industries", {}).values()))
 
-    # Create the snapshot
+    # Create the snapshot with gzip-compressed BYTEA
+    compressed = gzip.compress(orjson.dumps(dashboard_data), compresslevel=1)
     snapshot = Snapshot(
         name=name,
-        dashboard_data=dashboard_data,
+        dashboard_data_compressed=compressed,
         source_filename=file.filename,
         ticker_count=ticker_count,
         date_count=date_count,

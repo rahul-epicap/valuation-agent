@@ -127,7 +127,17 @@ async def _get_enriched_data(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
-    data = dict(snapshot.dashboard_data)
+    # Prefer compressed BYTEA, fall back to JSONB for older snapshots
+    if snapshot.dashboard_data_compressed is not None:
+        data = orjson.loads(gzip.decompress(snapshot.dashboard_data_compressed))
+    elif snapshot.dashboard_data is not None:
+        data = dict(snapshot.dashboard_data)
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Snapshot {sid} exists but has no dashboard data",
+        )
+
     # Deep-copy fm so _compact_data's in-place mutations don't touch the ORM object
     if "fm" in data:
         data["fm"] = {
@@ -271,9 +281,10 @@ async def import_snapshot(
     date_count = len(data.get("dates", []))
     industry_count = len(set(data.get("industries", {}).values()))
 
+    compressed_data = gzip.compress(orjson.dumps(data), compresslevel=1)
     snapshot = Snapshot(
         name=body.name,
-        dashboard_data=data,
+        dashboard_data_compressed=compressed_data,
         source_filename="imported",
         ticker_count=ticker_count,
         date_count=date_count,
