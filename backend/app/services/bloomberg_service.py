@@ -15,16 +15,21 @@ BDH Field Mapping:
     CURR_ENTP_VAL                    → Enterprise Value
     BEST_SALES + BF override        → Forward Revenue consensus    (= fe denominator)
     BEST_GROSS_MARGIN + BF          → Forward Gross Margin % consensus
-    BEST_EPS + BF                   → Forward EPS consensus        (= fe)
+    BEST_EPS + BF                   → Forward Adj. EPS consensus   (= fe)
+    BEST_EPS_GAAP + BF              → Forward GAAP EPS consensus   (= fe_gaap)
     TRAIL_12M_NET_SALES             → Trailing 12M actual revenue  (quarterly, forward-filled)
-    TRAIL_12M_EPS                   → Trailing 12M actual EPS      (quarterly, forward-filled)
+    TRAIL_12M_EST_COMP_EPS_EXCL_STK → Trailing 12M Adj. EPS ex-SBC (quarterly, forward-filled)
+    TRAIL_12M_COMPARABLE_EPS_GAAP   → Trailing 12M GAAP EPS        (quarterly, forward-filled)
     BEST_PE_RATIO                   → Forward P/E ratio            (= pe)
 
 Derived in Python:
-    er = EV / Forward Revenue
-    eg = EV / (BEST_GROSS_MARGIN/100 * Forward Revenue)
-    rg = (Forward Revenue / Trailing 12M Revenue) - 1
-    xg = (Forward EPS / Trailing 12M EPS) - 1
+    er      = EV / Forward Revenue
+    eg      = EV / (BEST_GROSS_MARGIN/100 * Forward Revenue)
+    rg      = (Forward Revenue / Trailing 12M Revenue) - 1
+    xg      = (BEST_EPS BF / TRAIL_12M_EST_COMP_EPS_EXCL_STK) - 1   (Adj. EPS growth)
+    xg_gaap = (BEST_EPS_GAAP BF / TRAIL_12M_COMPARABLE_EPS_GAAP) - 1 (GAAP EPS growth)
+    fe_gaap = BEST_EPS_GAAP (BF override)
+    pe_gaap = pe * fe / fe_gaap  (Price / GAAP Forward EPS)
 """
 
 from __future__ import annotations
@@ -610,6 +615,67 @@ class BloombergService:
 
         return industries
 
+    async def _fetch_eps_market_type(
+        self, tickers: list[str] | None = None
+    ) -> dict[str, str]:
+        """Fetch BEST_EPS_MARKET_TYPE for all tickers via BDP.
+
+        Returns {short_ticker: 'Adjusted' | 'GAAP'}.
+        """
+        ticker_universe = tickers or self._tickers
+        result: dict[str, str] = {}
+
+        for batch in self._batches(ticker_universe, _BATCH_SIZE):
+            try:
+                df = await asyncio.to_thread(
+                    self._bdp_sync, batch, ["BEST_EPS_MARKET_TYPE"]
+                )
+            except Exception:
+                logger.warning(
+                    "BDP BEST_EPS_MARKET_TYPE failed for batch starting with %s",
+                    batch[0] if batch else "(empty)",
+                )
+                continue
+
+            if df.empty:
+                continue
+
+            df = df.reset_index()
+
+            sec_col = None
+            for c in df.columns:
+                if str(c).lower() == "security":
+                    sec_col = c
+                    break
+
+            if sec_col is None:
+                for c in df.columns:
+                    sample = df[c].iloc[0] if len(df) > 0 else ""
+                    if isinstance(sample, str) and "Equity" in sample:
+                        sec_col = c
+                        break
+
+            if sec_col is None:
+                logger.warning(
+                    "BDP BEST_EPS_MARKET_TYPE: cannot find security column. "
+                    "Columns: %s",
+                    list(df.columns),
+                )
+                continue
+
+            for _, row in df.iterrows():
+                ticker_bbg = str(row[sec_col]).strip()
+                short = _clean_ticker(ticker_bbg)
+                val = row.get("BEST_EPS_MARKET_TYPE")
+                if val and isinstance(val, str) and val.strip():
+                    result[short] = val.strip()
+
+        logger.info(
+            "BEST_EPS_MARKET_TYPE: %d tickers classified",
+            len(result),
+        )
+        return result
+
     # ------------------------------------------------------------------
     # Assembly
     # ------------------------------------------------------------------
@@ -625,6 +691,9 @@ class BloombergService:
         pe_data: dict[str, dict[str, float | None]],
         industries: dict[str, str],
         ticker_universe: list[str],
+        fwd_eps_gaap_data: dict[str, dict[str, float | None]] | None = None,
+        trail_eps_gaap_data: dict[str, dict[str, float | None]] | None = None,
+        eps_market_type: dict[str, str] | None = None,
     ) -> dict:
         """Assemble raw BDH data dicts into the final dashboard JSON.
 
@@ -676,14 +745,29 @@ class BloombergService:
         )
         pe_arrays = to_arrays(pe_data)
 
+        # GAAP EPS arrays (optional — only present when GAAP fields were fetched)
+        fwd_eps_gaap_arrays: dict[str, list[float | None]] = {}
+        trail_eps_gaap_arrays: dict[str, list[float | None]] = {}
+        if fwd_eps_gaap_data:
+            fwd_eps_gaap_arrays = to_arrays(fwd_eps_gaap_data)
+        if trail_eps_gaap_data:
+            trail_eps_gaap_arrays = self._forward_fill_yearly_to_monthly(
+                trail_eps_gaap_data, all_dates
+            )
+
         # Compute derived metrics
         er_arrays: dict[str, list[float | None]] = {}
         eg_arrays: dict[str, list[float | None]] = {}
         rg_arrays: dict[str, list[float | None]] = {}
         xg_arrays: dict[str, list[float | None]] = {}
+        xg_gaap_arrays: dict[str, list[float | None]] = {}
+        fe_gaap_arrays: dict[str, list[float | None]] = {}
+        pe_gaap_arrays: dict[str, list[float | None]] = {}
 
         def _null_arr() -> list[None]:
             return [None] * num_dates
+
+        has_gaap = bool(fwd_eps_gaap_arrays or trail_eps_gaap_arrays)
 
         for ticker in short_tickers:
             ev_vals = ev_arrays.get(ticker) or _null_arr()
@@ -697,6 +781,13 @@ class BloombergService:
             eg_vals: list[float | None] = []
             rg_vals: list[float | None] = []
             xg_vals: list[float | None] = []
+            xg_gaap_vals: list[float | None] = []
+            fe_gaap_vals: list[float | None] = []
+            pe_gaap_vals: list[float | None] = []
+
+            # GAAP-specific source arrays
+            fwd_eps_gaap_vals = fwd_eps_gaap_arrays.get(ticker) or _null_arr()
+            trail_eps_gaap_vals = trail_eps_gaap_arrays.get(ticker) or _null_arr()
 
             for i in range(num_dates):
                 ev = ev_vals[i] if i < len(ev_vals) else None
@@ -732,21 +823,53 @@ class BloombergService:
                 else:
                     rg_vals.append(None)
 
-                # EPS Growth = BEST_EPS(BF) / TRAIL_12M_EPS - 1
+                # Adj EPS Growth = BEST_EPS(BF) / TRAIL_12M_EST_COMP_EPS_EXCL_STK - 1
                 if fwd_eps is not None and trail_eps is not None and trail_eps != 0:
                     xg_vals.append(round(fwd_eps / trail_eps - 1.0, 4))
                 else:
                     xg_vals.append(None)
 
+                # GAAP EPS metrics
+                fwd_gaap = fwd_eps_gaap_vals[i] if i < len(fwd_eps_gaap_vals) else None
+                trail_gaap = (
+                    trail_eps_gaap_vals[i] if i < len(trail_eps_gaap_vals) else None
+                )
+
+                # fe_gaap = BEST_EPS_GAAP (BF override)
+                fe_gaap_vals.append(fwd_gaap)
+
+                # xg_gaap = BEST_EPS_GAAP(BF) / TRAIL_12M_COMPARABLE_EPS_GAAP - 1
+                if fwd_gaap is not None and trail_gaap is not None and trail_gaap != 0:
+                    xg_gaap_vals.append(round(fwd_gaap / trail_gaap - 1.0, 4))
+                else:
+                    xg_gaap_vals.append(None)
+
+                # pe_gaap = pe * fe / fe_gaap (derived from existing P/E and EPS)
+                pe_val = pe_arrays.get(ticker, _null_arr())
+                pe_i = pe_val[i] if i < len(pe_val) else None
+                if (
+                    pe_i is not None
+                    and fwd_eps is not None
+                    and fwd_gaap is not None
+                    and fwd_gaap != 0
+                ):
+                    pe_gaap_vals.append(round(pe_i * fwd_eps / fwd_gaap, 4))
+                else:
+                    pe_gaap_vals.append(None)
+
             er_arrays[ticker] = er_vals
             eg_arrays[ticker] = eg_vals
             rg_arrays[ticker] = rg_vals
             xg_arrays[ticker] = xg_vals
+            if has_gaap:
+                xg_gaap_arrays[ticker] = xg_gaap_vals
+                fe_gaap_arrays[ticker] = fe_gaap_vals
+                pe_gaap_arrays[ticker] = pe_gaap_vals
 
         # Assemble fm dict
         fm: dict[str, dict[str, list[float | None]]] = {}
         for ticker in short_tickers:
-            fm[ticker] = {
+            ticker_fm: dict[str, list[float | None]] = {
                 "er": er_arrays.get(ticker) or _null_arr(),
                 "eg": eg_arrays.get(ticker) or _null_arr(),
                 "pe": pe_arrays.get(ticker) or _null_arr(),
@@ -754,6 +877,13 @@ class BloombergService:
                 "xg": xg_arrays.get(ticker) or _null_arr(),
                 "fe": fwd_eps_arrays.get(ticker) or _null_arr(),
             }
+            if has_gaap:
+                ticker_fm["xg_gaap"] = xg_gaap_arrays.get(ticker) or _null_arr()
+                ticker_fm["fe_gaap"] = fe_gaap_arrays.get(ticker) or _null_arr()
+                ticker_fm["pe_gaap"] = pe_gaap_arrays.get(ticker) or _null_arr()
+            if eps_market_type and ticker in eps_market_type:
+                ticker_fm["epsMarketType"] = eps_market_type[ticker]
+            fm[ticker] = ticker_fm
 
         result = {
             "dates": all_dates,
@@ -819,7 +949,10 @@ class BloombergService:
             trail_rev_data,
             trail_eps_data,
             pe_data,
+            fwd_eps_gaap_data,
+            trail_eps_gaap_data,
             industries,
+            eps_mkt_type,
         ) = await asyncio.gather(
             self._fetch_bdh_metric(
                 "CURR_ENTP_VAL", start_date, end_date, periodicity=periodicity
@@ -846,11 +979,24 @@ class BloombergService:
                 periodicity=periodicity,
             ),
             self._fetch_bdh_metric("TRAIL_12M_NET_SALES", trail_start, end_date),
-            self._fetch_bdh_metric("TRAIL_12M_EPS", trail_start, end_date),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_EST_COMP_EPS_EXCL_STK", trail_start, end_date
+            ),
             self._fetch_bdh_metric(
                 "BEST_PE_RATIO", start_date, end_date, periodicity=periodicity
             ),
+            self._fetch_bdh_metric(
+                "BEST_EPS_GAAP",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity=periodicity,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_COMPARABLE_EPS_GAAP", trail_start, end_date
+            ),
             self._fetch_industries(),
+            self._fetch_eps_market_type(),
         )
 
         return self._assemble_dashboard_json(
@@ -863,6 +1009,9 @@ class BloombergService:
             pe_data,
             industries,
             self._tickers,
+            fwd_eps_gaap_data=fwd_eps_gaap_data,
+            trail_eps_gaap_data=trail_eps_gaap_data,
+            eps_market_type=eps_mkt_type,
         )
 
     async def fetch_for_tickers(
@@ -895,7 +1044,10 @@ class BloombergService:
             trail_rev_data,
             trail_eps_data,
             pe_data,
+            fwd_eps_gaap_data,
+            trail_eps_gaap_data,
             industries,
+            eps_mkt_type,
         ) = await asyncio.gather(
             self._fetch_bdh_metric(
                 "CURR_ENTP_VAL",
@@ -935,7 +1087,7 @@ class BloombergService:
                 tickers=tickers,
             ),
             self._fetch_bdh_metric(
-                "TRAIL_12M_EPS",
+                "TRAIL_12M_EST_COMP_EPS_EXCL_STK",
                 trail_start,
                 end_date,
                 tickers=tickers,
@@ -947,7 +1099,22 @@ class BloombergService:
                 periodicity="WEEKLY",
                 tickers=tickers,
             ),
+            self._fetch_bdh_metric(
+                "BEST_EPS_GAAP",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=tickers,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_COMPARABLE_EPS_GAAP",
+                trail_start,
+                end_date,
+                tickers=tickers,
+            ),
             self._fetch_industries(tickers=tickers),
+            self._fetch_eps_market_type(tickers=tickers),
         )
 
         return self._assemble_dashboard_json(
@@ -960,6 +1127,9 @@ class BloombergService:
             pe_data,
             industries,
             tickers,
+            fwd_eps_gaap_data=fwd_eps_gaap_data,
+            trail_eps_gaap_data=trail_eps_gaap_data,
+            eps_market_type=eps_mkt_type,
         )
 
     async def fetch_expanded(
@@ -1024,7 +1194,10 @@ class BloombergService:
             trail_rev_data,
             trail_eps_data,
             pe_data,
+            fwd_eps_gaap_data,
+            trail_eps_gaap_data,
             industries,
+            eps_mkt_type,
         ) = await asyncio.gather(
             self._fetch_bdh_metric(
                 "CURR_ENTP_VAL",
@@ -1064,7 +1237,7 @@ class BloombergService:
                 tickers=universe,
             ),
             self._fetch_bdh_metric(
-                "TRAIL_12M_EPS",
+                "TRAIL_12M_EST_COMP_EPS_EXCL_STK",
                 trail_start,
                 end_date,
                 tickers=universe,
@@ -1076,7 +1249,22 @@ class BloombergService:
                 periodicity="WEEKLY",
                 tickers=universe,
             ),
+            self._fetch_bdh_metric(
+                "BEST_EPS_GAAP",
+                start_date,
+                end_date,
+                overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+                periodicity="WEEKLY",
+                tickers=universe,
+            ),
+            self._fetch_bdh_metric(
+                "TRAIL_12M_COMPARABLE_EPS_GAAP",
+                trail_start,
+                end_date,
+                tickers=universe,
+            ),
             self._fetch_industries(tickers=universe),
+            self._fetch_eps_market_type(tickers=universe),
         )
 
         # Phase 4 — Assemble
@@ -1091,6 +1279,9 @@ class BloombergService:
             pe_data,
             industries,
             universe,
+            fwd_eps_gaap_data=fwd_eps_gaap_data,
+            trail_eps_gaap_data=trail_eps_gaap_data,
+            eps_market_type=eps_mkt_type,
         )
 
     # ------------------------------------------------------------------
@@ -1127,7 +1318,17 @@ class BloombergService:
 
         old_fm: dict = existing.get("fm", {})
         new_fm: dict = new.get("fm", {})
-        metric_keys = ["er", "eg", "pe", "rg", "xg", "fe"]
+        metric_keys = [
+            "er",
+            "eg",
+            "pe",
+            "rg",
+            "xg",
+            "fe",
+            "xg_gaap",
+            "fe_gaap",
+            "pe_gaap",
+        ]
 
         merged_fm: dict[str, dict[str, list[float | None]]] = {}
         for ticker in all_tickers:
@@ -1156,6 +1357,10 @@ class BloombergService:
                     merged_arr.append(new_val if new_val is not None else old_val)
 
                 ticker_data[key] = merged_arr
+            # Preserve scalar metadata (prefer new over old)
+            emt = new_metrics.get("epsMarketType") or old_metrics.get("epsMarketType")
+            if emt:
+                ticker_data["epsMarketType"] = emt
             merged_fm[ticker] = ticker_data
 
         # Merge industries (new overwrites old)

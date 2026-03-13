@@ -49,6 +49,7 @@ async function main() {
     evRev: 'EV / Revenue',
     evGP: 'EV / Gross Profit',
     pEPS: 'Price / EPS',
+    pEPS_GAAP: 'P / GAAP EPS',
   };
 
   for (const metric of metrics) {

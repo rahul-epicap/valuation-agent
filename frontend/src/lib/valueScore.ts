@@ -1,8 +1,19 @@
 import {
-  DashboardData, MetricType, ComparisonResult, AggregateMethodResult,
-  RegressionMethodName, MULTIPLE_KEYS, GROWTH_KEYS,
+  DashboardData, MetricType, MetricArrayKey, ComparisonResult, AggregateMethodResult,
+  RegressionMethodName, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS,
 } from './types';
 import { filterPoints, okEps, percentile } from './filters';
+
+/** Resolve the effective multiple/growth keys for a ticker based on epsMarketType. */
+function resolveEpsKeys(
+  type: MetricType,
+  d: TickerMetrics,
+): { mk: MetricArrayKey; gk: MetricArrayKey } {
+  if (type === 'pEPS' && d.epsMarketType === 'GAAP') {
+    return { mk: 'pe_gaap', gk: 'xg_gaap' };
+  }
+  return { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
+}
 import { linearRegressionCooks, compareRegressionMethods } from './regression';
 
 export interface HistoricalBaseline {
@@ -119,13 +130,16 @@ export function computeSingleTickerScore(
   dateIndex: number,
   baseline: HistoricalBaseline
 ): SingleTickerScore | null {
-  const mk = MULTIPLE_KEYS[type];
-  const gk = GROWTH_KEYS[type];
   const d = data.fm[ticker];
   if (!d) return null;
+  const isEps = type === 'pEPS' || type === 'pEPS_GAAP';
+  const { mk, gk } = isEps ? resolveEpsKeys(type, d) : { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
 
-  const m = d[mk][dateIndex];
-  const g = d[gk][dateIndex];
+  const mArr = d[mk];
+  const gArr = d[gk];
+  if (!mArr || !gArr) return null;
+  const m = mArr[dateIndex];
+  const g = gArr[dateIndex];
   if (m == null || g == null) return null;
 
   // Exclude negative earnings for all metrics
@@ -135,8 +149,8 @@ export function computeSingleTickerScore(
   if (type === 'evRev' || type === 'evGP') {
     if (g < 0 || g > 0.50) return null;
   }
-  if (type === 'pEPS') {
-    if (!okEps(data, ticker, dateIndex)) return null;
+  if (type === 'pEPS' || type === 'pEPS_GAAP') {
+    if (!okEps(data, ticker, dateIndex, type)) return null;
     if (m > 200) return null;
   }
   if (type === 'evRev' && m > 80) return null;
@@ -166,8 +180,7 @@ export function computeDeviationTimeSeries(
   epsGrMax: number | null,
   excludeYear?: number
 ): DeviationPoint[] {
-  const mk = MULTIPLE_KEYS[type];
-  const gk = GROWTH_KEYS[type];
+  const isEps = type === 'pEPS' || type === 'pEPS_GAAP';
   const result: DeviationPoint[] = [];
 
   for (let di = 0; di < data.dates.length; di++) {
@@ -196,8 +209,15 @@ export function computeDeviationTimeSeries(
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
     }
-    const m = d[mk][di];
-    const g = d[gk][di];
+    const { mk, gk } = isEps ? resolveEpsKeys(type, d) : { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
+    const mArr = d[mk];
+    const gArr = d[gk];
+    if (!mArr || !gArr) {
+      result.push({ date: data.dates[di], pctDiff: null });
+      continue;
+    }
+    const m = mArr[di];
+    const g = gArr[di];
     if (m == null || g == null) {
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
@@ -214,7 +234,7 @@ export function computeDeviationTimeSeries(
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
     }
-    if (type === 'pEPS' && (!okEps(data, ticker, di) || m > 200)) {
+    if ((type === 'pEPS' || type === 'pEPS_GAAP') && (!okEps(data, ticker, di, type) || m > 200)) {
       result.push({ date: data.dates[di], pctDiff: null });
       continue;
     }
@@ -263,13 +283,16 @@ export function computeSpotScore(
   epsGrMin: number | null,
   epsGrMax: number | null
 ): SpotScore | null {
-  const mk = MULTIPLE_KEYS[type];
-  const gk = GROWTH_KEYS[type];
   const d = data.fm[ticker];
   if (!d) return null;
+  const isEps = type === 'pEPS' || type === 'pEPS_GAAP';
+  const { mk, gk } = isEps ? resolveEpsKeys(type, d) : { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
 
-  const m = d[mk][dateIndex];
-  const g = d[gk][dateIndex];
+  const mArr = d[mk];
+  const gArr = d[gk];
+  if (!mArr || !gArr) return null;
+  const m = mArr[dateIndex];
+  const g = gArr[dateIndex];
   if (m == null || g == null) return null;
 
   // Exclude negative earnings for all metrics
@@ -279,8 +302,8 @@ export function computeSpotScore(
   if (type === 'evRev' || type === 'evGP') {
     if (g < 0 || g > 0.50) return null;
   }
-  if (type === 'pEPS') {
-    if (!okEps(data, ticker, dateIndex)) return null;
+  if (type === 'pEPS' || type === 'pEPS_GAAP') {
+    if (!okEps(data, ticker, dateIndex, type)) return null;
     if (m > 200) return null;
   }
   if (type === 'evRev' && m > 80) return null;

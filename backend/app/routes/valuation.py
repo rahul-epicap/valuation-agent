@@ -24,7 +24,10 @@ router = APIRouter(tags=["valuation"])
 class ValuationEstimateRequest(BaseModel):
     ticker: str | None = None
     revenue_growth: float  # decimal, 0.08 = 8%
-    eps_growth: float  # decimal — used for regression; DCF fallback if no estimates
+    eps_growth: float  # decimal — Adj. EPS growth for regression; DCF fallback
+    eps_growth_gaap: float | None = (
+        None  # decimal — GAAP EPS growth for pEPS_GAAP regression
+    )
     eps_growth_estimates: list[float] | None = None  # year-by-year EPS growth for DCF
     forward_eps: float | None = None
     current_pe: float | None = None
@@ -175,6 +178,7 @@ async def valuation_estimate(
             dcf_discount_rate=body.dcf_discount_rate,
             dcf_terminal_growth=body.dcf_terminal_growth,
             dcf_fade_period=body.dcf_fade_period,
+            eps_growth_gaap=body.eps_growth_gaap,
         )
     except Exception as exc:
         logger.exception("Valuation computation failed")

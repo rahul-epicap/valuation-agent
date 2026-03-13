@@ -129,9 +129,11 @@ export default function MultiplesChart({ data, state, dispatch, startDi, endDi, 
     hlA.forEach((tk, i) => {
       const fm = data.fm[tk];
       if (!fm) return;
+      const mkArr = fm[mk];
+      if (!mkArr) return;
       ds.push({
         label: tk,
-        data: fm[mk].slice(startDi, endDi + 1),
+        data: mkArr.slice(startDi, endDi + 1),
         borderColor: HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length],
         backgroundColor: 'transparent',
         borderWidth: 2.5,

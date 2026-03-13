@@ -13,9 +13,17 @@ export interface TickerMetrics {
   rg: (number | null)[];
   xg: (number | null)[];
   fe: (number | null)[];
+  xg_gaap?: (number | null)[];
+  fe_gaap?: (number | null)[];
+  pe_gaap?: (number | null)[];
+  /** 'Adjusted' or 'GAAP' — from BEST_EPS_MARKET_TYPE (BDP) */
+  epsMarketType?: string;
 }
 
-export type MetricType = 'evRev' | 'evGP' | 'pEPS';
+/** Keys on TickerMetrics that hold time-series arrays (excludes scalar metadata). */
+export type MetricArrayKey = 'er' | 'eg' | 'pe' | 'rg' | 'xg' | 'fe' | 'xg_gaap' | 'fe_gaap' | 'pe_gaap';
+
+export type MetricType = 'evRev' | 'evGP' | 'pEPS' | 'pEPS_GAAP';
 
 export interface RegressionResult {
   slope: number;
@@ -72,22 +80,25 @@ export interface SnapshotMeta {
   industry_count: number | null;
 }
 
-export const MULTIPLE_KEYS: Record<MetricType, keyof TickerMetrics> = {
+export const MULTIPLE_KEYS: Record<MetricType, MetricArrayKey> = {
   evRev: 'er',
   evGP: 'eg',
   pEPS: 'pe',
+  pEPS_GAAP: 'pe_gaap',
 };
 
-export const GROWTH_KEYS: Record<MetricType, keyof TickerMetrics> = {
+export const GROWTH_KEYS: Record<MetricType, MetricArrayKey> = {
   evRev: 'rg',
   evGP: 'rg',
   pEPS: 'xg',
+  pEPS_GAAP: 'xg_gaap',
 };
 
 export const COLORS: Record<MetricType, { m: string; b: string; l: string }> = {
-  evRev: { m: '#3b82f6', b: 'rgba(59,130,246,.45)', l: '#60a5fa' },
-  evGP:  { m: '#f59e0b', b: 'rgba(245,158,11,.45)', l: '#fbbf24' },
-  pEPS:  { m: '#10b981', b: 'rgba(16,185,129,.45)', l: '#34d399' },
+  evRev:     { m: '#3b82f6', b: 'rgba(59,130,246,.45)', l: '#60a5fa' },
+  evGP:      { m: '#f59e0b', b: 'rgba(245,158,11,.45)', l: '#fbbf24' },
+  pEPS:      { m: '#10b981', b: 'rgba(16,185,129,.45)', l: '#34d399' },
+  pEPS_GAAP: { m: '#8b5cf6', b: 'rgba(139,92,246,.45)', l: '#a78bfa' },
 };
 
 export const HIGHLIGHT_COLORS = [
@@ -99,30 +110,35 @@ export const METRIC_LABELS: Record<MetricType, string> = {
   evRev: 'EV / Revenue',
   evGP: 'EV / Gross Profit',
   pEPS: 'Price / EPS',
+  pEPS_GAAP: 'P / GAAP EPS',
 };
 
 export const METRIC_TITLES: Record<MetricType, string> = {
   evRev: 'EV / Fwd Revenue × Revenue Growth',
   evGP: 'EV / Fwd Gross Profit × Revenue Growth',
   pEPS: 'Price / Fwd Adj. EPS × EPS Growth',
+  pEPS_GAAP: 'Price / Fwd GAAP EPS × GAAP EPS Growth',
 };
 
 export const Y_LABELS: Record<MetricType, string> = {
   evRev: 'EV / Fwd Revenue',
   evGP: 'EV / Fwd Gross Profit',
   pEPS: 'Price / Fwd Adj. EPS',
+  pEPS_GAAP: 'Price / Fwd GAAP EPS',
 };
 
 export const X_LABELS: Record<MetricType, string> = {
   evRev: 'Revenue Growth (%)',
   evGP: 'Revenue Growth (%)',
   pEPS: 'EPS Growth (%)',
+  pEPS_GAAP: 'GAAP EPS Growth (%)',
 };
 
 export const Y_LABELS_TIME: Record<MetricType, string> = {
   evRev: 'EV / Fwd Revenue (x)',
   evGP: 'EV / Gross Profit (x)',
   pEPS: 'Price / Fwd EPS (x)',
+  pEPS_GAAP: 'Price / Fwd GAAP EPS (x)',
 };
 
 export interface IndexInfo {
