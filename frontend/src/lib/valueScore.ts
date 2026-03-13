@@ -1,19 +1,8 @@
 import {
-  DashboardData, MetricType, MetricArrayKey, ComparisonResult, AggregateMethodResult,
-  RegressionMethodName, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS,
+  DashboardData, MetricType, ComparisonResult, AggregateMethodResult,
+  RegressionMethodName, MULTIPLE_KEYS, GROWTH_KEYS,
 } from './types';
-import { filterPoints, okEps, percentile } from './filters';
-
-/** Resolve the effective multiple/growth keys for a ticker based on epsMarketType. */
-function resolveEpsKeys(
-  type: MetricType,
-  d: TickerMetrics,
-): { mk: MetricArrayKey; gk: MetricArrayKey } {
-  if (type === 'pEPS' && d.epsMarketType === 'GAAP') {
-    return { mk: 'pe_gaap', gk: 'xg_gaap' };
-  }
-  return { mk: MULTIPLE_KEYS[type], gk: GROWTH_KEYS[type] };
-}
+import { filterPoints, okEps, percentile, resolveEpsKeys } from './filters';
 import { linearRegressionCooks, compareRegressionMethods } from './regression';
 
 export interface HistoricalBaseline {

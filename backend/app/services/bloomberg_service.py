@@ -668,7 +668,15 @@ class BloombergService:
                 short = _clean_ticker(ticker_bbg)
                 val = row.get("BEST_EPS_MARKET_TYPE")
                 if val and isinstance(val, str) and val.strip():
-                    result[short] = val.strip()
+                    cleaned = val.strip()
+                    if cleaned not in ("Adjusted", "GAAP"):
+                        logger.warning(
+                            "BEST_EPS_MARKET_TYPE: unexpected value %r for %s, "
+                            "defaulting to Adjusted behaviour",
+                            cleaned,
+                            short,
+                        )
+                    result[short] = cleaned
 
         logger.info(
             "BEST_EPS_MARKET_TYPE: %d tickers classified",
@@ -788,6 +796,7 @@ class BloombergService:
             # GAAP-specific source arrays
             fwd_eps_gaap_vals = fwd_eps_gaap_arrays.get(ticker) or _null_arr()
             trail_eps_gaap_vals = trail_eps_gaap_arrays.get(ticker) or _null_arr()
+            pe_vals_for_gaap = pe_arrays.get(ticker) or _null_arr()
 
             for i in range(num_dates):
                 ev = ev_vals[i] if i < len(ev_vals) else None
@@ -845,8 +854,7 @@ class BloombergService:
                     xg_gaap_vals.append(None)
 
                 # pe_gaap = pe * fe / fe_gaap (derived from existing P/E and EPS)
-                pe_val = pe_arrays.get(ticker, _null_arr())
-                pe_i = pe_val[i] if i < len(pe_val) else None
+                pe_i = pe_vals_for_gaap[i] if i < len(pe_vals_for_gaap) else None
                 if (
                     pe_i is not None
                     and fwd_eps is not None

@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import math
 import os
 import sys
 from datetime import datetime
@@ -101,23 +100,6 @@ def parse_args() -> argparse.Namespace:
         help="Override DATABASE_URL",
     )
     return parser.parse_args()
-
-
-def _safe_float(val: object) -> float | None:
-    """Convert a value to float or None, handling NaN/Inf/missing."""
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        if math.isnan(val) or math.isinf(val):
-            return None
-        return round(float(val), 4)
-    try:
-        f = float(val)
-        if math.isnan(f) or math.isinf(f):
-            return None
-        return round(f, 4)
-    except (ValueError, TypeError):
-        return None
 
 
 async def main() -> None:

@@ -26,7 +26,7 @@ export function getActiveTickers(
  * so the scatter chart plots each ticker on its native EPS basis.
  * For pEPS_GAAP, always use GAAP keys regardless of epsMarketType.
  */
-function resolveEpsKeys(
+export function resolveEpsKeys(
   type: MetricType,
   d: TickerMetrics,
 ): { mk: MetricArrayKey; gk: MetricArrayKey } {
