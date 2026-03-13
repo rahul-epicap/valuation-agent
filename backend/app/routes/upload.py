@@ -50,12 +50,12 @@ async def upload_excel(
     # Create the snapshot
     snapshot = Snapshot(
         name=name,
-        dashboard_data=dashboard_data,
         source_filename=file.filename,
         ticker_count=ticker_count,
         date_count=date_count,
         industry_count=industry_count,
     )
+    snapshot.set_data(dashboard_data)
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)
