@@ -764,9 +764,6 @@ def compute_forward_targets(
             spot_pe = spot["slope"] * growth_pct + spot["intercept"]
             if spot_pe is not None and spot_pe > 0:
                 spot_target = spot_pe * fwd_eps
-            else:
-                spot_pe = spot_pe  # keep negative for transparency
-                spot_target = None
 
         # Historical regression-implied P/E
         hist_pe: float | None = None
@@ -775,9 +772,6 @@ def compute_forward_targets(
             hist_pe = hist["avg_slope"] * growth_pct + hist["avg_intercept"]
             if hist_pe is not None and hist_pe > 0:
                 hist_target = hist_pe * fwd_eps
-            else:
-                hist_pe = hist_pe
-                hist_target = None
 
         # DCF cross-check
         dcf_pe = compute_dcf_at_horizon(
