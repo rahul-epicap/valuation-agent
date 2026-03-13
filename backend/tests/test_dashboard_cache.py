@@ -4,6 +4,7 @@ import gzip
 
 import orjson
 
+from app.models import Snapshot
 from app.routes import dashboard as dash_mod
 
 
@@ -181,3 +182,47 @@ class TestCacheBehavior:
         # Oldest entries (0, 1) should be evicted
         assert 0 not in dash_mod._cache
         assert 1 not in dash_mod._cache
+
+
+# ---------------------------------------------------------------------------
+# Snapshot.get_data / set_data tests
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotDataHelpers:
+    def test_set_data_stores_compressed_bytea(self) -> None:
+        snap = Snapshot(name="test")
+        data = {"tickers": ["AAPL"], "dates": ["2024-01-01"]}
+        snap.set_data(data)
+        assert snap.dashboard_data_compressed is not None
+        assert snap.dashboard_data is None
+        # Verify it's valid gzip
+        assert orjson.loads(gzip.decompress(snap.dashboard_data_compressed)) == data
+
+    def test_get_data_prefers_compressed(self) -> None:
+        snap = Snapshot(name="test")
+        compressed_data = {"source": "compressed"}
+        jsonb_data = {"source": "jsonb"}
+        snap.dashboard_data_compressed = gzip.compress(
+            orjson.dumps(compressed_data), compresslevel=1
+        )
+        snap.dashboard_data = jsonb_data
+        assert snap.get_data() == compressed_data
+
+    def test_get_data_falls_back_to_jsonb(self) -> None:
+        snap = Snapshot(name="test")
+        snap.dashboard_data_compressed = None
+        snap.dashboard_data = {"source": "jsonb"}
+        assert snap.get_data() == {"source": "jsonb"}
+
+    def test_get_data_returns_none_when_both_null(self) -> None:
+        snap = Snapshot(name="test")
+        snap.dashboard_data_compressed = None
+        snap.dashboard_data = None
+        assert snap.get_data() is None
+
+    def test_roundtrip(self) -> None:
+        snap = Snapshot(name="test")
+        data = _sample_dashboard_data()
+        snap.set_data(data)
+        assert snap.get_data() == data

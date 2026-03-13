@@ -127,12 +127,8 @@ async def _get_enriched_data(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
-    # Prefer compressed BYTEA, fall back to JSONB for older snapshots
-    if snapshot.dashboard_data_compressed is not None:
-        data = orjson.loads(gzip.decompress(snapshot.dashboard_data_compressed))
-    elif snapshot.dashboard_data is not None:
-        data = dict(snapshot.dashboard_data)
-    else:
+    data = snapshot.get_data()
+    if data is None:
         raise HTTPException(
             status_code=404,
             detail=f"Snapshot {sid} exists but has no dashboard data",
@@ -281,15 +277,14 @@ async def import_snapshot(
     date_count = len(data.get("dates", []))
     industry_count = len(set(data.get("industries", {}).values()))
 
-    compressed_data = gzip.compress(orjson.dumps(data), compresslevel=1)
     snapshot = Snapshot(
         name=body.name,
-        dashboard_data_compressed=compressed_data,
         source_filename="imported",
         ticker_count=ticker_count,
         date_count=date_count,
         industry_count=industry_count,
     )
+    snapshot.set_data(data)
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)

@@ -1,3 +1,6 @@
+import gzip
+
+import orjson
 from sqlalchemy import (
     Column,
     DateTime,
@@ -27,6 +30,21 @@ class Snapshot(Base):
     ticker_count = Column(Integer)
     date_count = Column(Integer)
     industry_count = Column(Integer)
+
+    def get_data(self) -> dict | None:
+        """Decompress and return dashboard data, preferring BYTEA over JSONB."""
+        if self.dashboard_data_compressed is not None:
+            return orjson.loads(gzip.decompress(self.dashboard_data_compressed))
+        if self.dashboard_data is not None:
+            return dict(self.dashboard_data)
+        return None
+
+    def set_data(self, data: dict) -> None:
+        """Gzip-compress and store dashboard data in BYTEA column."""
+        self.dashboard_data_compressed = gzip.compress(
+            orjson.dumps(data), compresslevel=1
+        )
+        self.dashboard_data = None
 
 
 class Index(Base):

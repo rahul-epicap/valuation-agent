@@ -106,12 +106,12 @@ async def fetch_bloomberg_data(
     # Create snapshot (same pattern as upload.py)
     snapshot = Snapshot(
         name=name,
-        dashboard_data=dashboard_data,
         source_filename="bloomberg-dapi",
         ticker_count=ticker_count,
         date_count=date_count,
         industry_count=industry_count,
     )
+    snapshot.set_data(dashboard_data)
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)
@@ -162,12 +162,12 @@ async def fetch_expanded_bloomberg_data(
 
     snapshot = Snapshot(
         name=name,
-        dashboard_data=dashboard_data,
         source_filename="bloomberg-expanded",
         ticker_count=ticker_count,
         date_count=date_count,
         industry_count=industry_count,
     )
+    snapshot.set_data(dashboard_data)
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)
@@ -226,7 +226,6 @@ async def fetch_batch_for_tickers(
     if body.snapshot_id:
         # Merge into existing snapshot
         from sqlalchemy import select
-        from sqlalchemy.orm.attributes import flag_modified
 
         result = await db.execute(
             select(Snapshot).where(Snapshot.id == body.snapshot_id)
@@ -238,11 +237,9 @@ async def fetch_batch_for_tickers(
                 detail=f"Snapshot {body.snapshot_id} not found",
             )
 
-        merged = BloombergService._merge_dashboard_data(
-            snapshot.dashboard_data, batch_data
-        )
-        snapshot.dashboard_data = merged
-        flag_modified(snapshot, "dashboard_data")
+        existing = snapshot.get_data() or {}
+        merged = BloombergService._merge_dashboard_data(existing, batch_data)
+        snapshot.set_data(merged)
         snapshot.ticker_count = len(merged.get("tickers", []))
         snapshot.date_count = len(merged.get("dates", []))
         snapshot.industry_count = len(set(merged.get("industries", {}).values()))
@@ -255,12 +252,12 @@ async def fetch_batch_for_tickers(
 
         snapshot = Snapshot(
             name=name,
-            dashboard_data=batch_data,
             source_filename="bloomberg-batch",
             ticker_count=len(batch_data.get("tickers", [])),
             date_count=len(batch_data.get("dates", [])),
             industry_count=len(set(batch_data.get("industries", {}).values())),
         )
+        snapshot.set_data(batch_data)
         db.add(snapshot)
 
     await db.commit()
@@ -293,7 +290,7 @@ async def update_bloomberg_data(
         select(Snapshot).order_by(Snapshot.created_at.desc()).limit(1)
     )
     latest_snapshot = result.scalar_one_or_none()
-    existing_data = latest_snapshot.dashboard_data if latest_snapshot else {}
+    existing_data = latest_snapshot.get_data() if latest_snapshot else {}
 
     try:
         merged_data = await service.fetch_incremental(
@@ -332,12 +329,12 @@ async def update_bloomberg_data(
 
     snapshot = Snapshot(
         name=name,
-        dashboard_data=merged_data,
         source_filename="bloomberg-incremental",
         ticker_count=ticker_count,
         date_count=date_count,
         industry_count=industry_count,
     )
+    snapshot.set_data(merged_data)
     db.add(snapshot)
     await db.commit()
     await db.refresh(snapshot)
