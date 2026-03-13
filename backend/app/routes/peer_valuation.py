@@ -11,8 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
-from app.routes.valuation import ForwardTargetInput, ForwardTargetResult
+from app.routes.valuation import (
+    ForwardTargetInput,
+    ForwardTargetResult,
+    MultiFactorResult,
+)
 from app.services import index_service, similarity_service, valuation_service
+from app.services.valuation_service import compute_spot_regression_multi_factor
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["peer-valuation"])
@@ -119,7 +124,7 @@ class PeerValuationResponse(BaseModel):
     dcf: dict | None = None
     snapshot_id: int
     forward_targets: list[ForwardTargetResult] | None = None
-    multi_factor_results: list[dict] | None = None
+    multi_factor_results: list[MultiFactorResult] | None = None
 
 
 @router.post("/valuation/peer-estimate", response_model=PeerValuationResponse)
@@ -216,18 +221,25 @@ async def peer_estimate(
 
     # Multi-factor regression (if factors requested)
     if body.regression_factors:
-        from app.services.valuation_service import compute_spot_regression_multi_factor
+        # Validate factors against known indices in the snapshot
+        known_indices = set()
+        for idx_list in (data.get("indices") or {}).values():
+            known_indices.update(idx_list)
+        for idx_list in indices_map.values():
+            known_indices.update(idx_list)
+        valid_factors = [f for f in body.regression_factors if f in known_indices]
 
-        all_tickers = data["tickers"]
-        latest_di = len(data["dates"]) - 1
-        metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
-        mf_results = []
-        for mt in metric_types:
-            mf = compute_spot_regression_multi_factor(
-                data, mt, latest_di, all_tickers, body.regression_factors, indices_map
-            )
-            if mf:
-                mf_results.append({"metric_type": mt, **mf})
-        result["multi_factor_results"] = mf_results if mf_results else None
+        if valid_factors:
+            all_tickers = data["tickers"]
+            latest_di = len(data["dates"]) - 1
+            metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
+            mf_results = []
+            for mt in metric_types:
+                mf = compute_spot_regression_multi_factor(
+                    data, mt, latest_di, all_tickers, valid_factors, indices_map
+                )
+                if mf:
+                    mf_results.append({"metric_type": mt, **mf})
+            result["multi_factor_results"] = mf_results if mf_results else None
 
     return result

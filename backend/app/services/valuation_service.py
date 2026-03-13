@@ -172,13 +172,19 @@ def filter_points_multi_factor(
 
     idx_map = indices_map or data.get("indices", {})
 
+    enriched: list[dict] = []
     for pt in base_pts:
         ticker_indices = set(idx_map.get(pt["t"], []))
-        pt["factorValues"] = {
-            f: (1 if f in ticker_indices else 0) for f in active_factors
-        }
+        enriched.append(
+            {
+                **pt,
+                "factorValues": {
+                    f: (1 if f in ticker_indices else 0) for f in active_factors
+                },
+            }
+        )
 
-    return base_pts
+    return enriched
 
 
 # ---------------------------------------------------------------------------

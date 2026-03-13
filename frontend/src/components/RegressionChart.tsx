@@ -38,7 +38,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     [data, state.exTk, state.indOn, state.idxOn]
   );
 
-  const mfActive = state.mfEnabled && state.regFactors.size > 0;
+  const mfActive = useMemo(() => state.mfEnabled && state.regFactors.size > 0, [state.mfEnabled, state.regFactors]);
   const regFactorArray = useMemo(() => [...state.regFactors], [state.regFactors]);
 
   const pts = useMemo(

@@ -39,7 +39,9 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
     [data, state.exTk, state.indOn, state.idxOn]
   );
 
-  const mfActive = state.mfEnabled && state.regFactors.size > 0;
+  // Cap factors in SlopeChart to avoid O(dates × n × p²) cost per render
+  const MAX_SLOPE_FACTORS = 20;
+  const mfActive = state.mfEnabled && state.regFactors.size > 0 && state.regFactors.size <= MAX_SLOPE_FACTORS;
   const regFactorArray = useMemo(() => [...state.regFactors], [state.regFactors]);
 
   const slopes = useMemo(() => {
@@ -206,7 +208,9 @@ export default function SlopeChart({ data, state, dispatch, startDi, endDi, char
             {mfActive ? 'Growth Coefficient Over Time' : 'Regression Slope Over Time'}
           </div>
           <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '1px' }}>
-            {mfActive ? 'Multi-factor growth coefficient — single-factor slope shown as dashed line' : 'Slope trend — responds to all filters'}
+            {state.mfEnabled && state.regFactors.size > MAX_SLOPE_FACTORS
+              ? `Multi-factor disabled in slope chart (${state.regFactors.size} factors > ${MAX_SLOPE_FACTORS} limit)`
+              : mfActive ? 'Multi-factor growth coefficient — single-factor slope shown as dashed line' : 'Slope trend — responds to all filters'}
           </div>
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_SLP', payload: t })} />

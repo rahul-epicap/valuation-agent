@@ -158,11 +158,17 @@ class ForwardTargetResult(BaseModel):
     dcf_upside_pct: float | None = None
 
 
+class FactorCoefficient(BaseModel):
+    name: str
+    type: str
+    coefficient: float
+
+
 class MultiFactorResult(BaseModel):
     metric_type: str
     intercept: float
     growth_coefficient: float
-    factors: list[dict]
+    factors: list[FactorCoefficient]
     r2: float
     adjusted_r2: float
     n: int
@@ -255,17 +261,24 @@ async def valuation_estimate(
 
     # 4. Multi-factor regression (if factors requested)
     if body.regression_factors:
-        all_tickers = data["tickers"]
-        latest_di = len(data["dates"]) - 1
-        metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
-        mf_results = []
-        for mt in metric_types:
-            mf = compute_spot_regression_multi_factor(
-                data, mt, latest_di, all_tickers, body.regression_factors
-            )
-            if mf:
-                mf_results.append({"metric_type": mt, **mf})
-        result_dict["multi_factor_results"] = mf_results if mf_results else None
+        # Validate factors against known indices in the snapshot
+        known_indices: set[str] = set()
+        for idx_list in (data.get("indices") or {}).values():
+            known_indices.update(idx_list)
+        valid_factors = [f for f in body.regression_factors if f in known_indices]
+
+        if valid_factors:
+            all_tickers = data["tickers"]
+            latest_di = len(data["dates"]) - 1
+            metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
+            mf_results = []
+            for mt in metric_types:
+                mf = compute_spot_regression_multi_factor(
+                    data, mt, latest_di, all_tickers, valid_factors
+                )
+                if mf:
+                    mf_results.append({"metric_type": mt, **mf})
+            result_dict["multi_factor_results"] = mf_results if mf_results else None
 
     # 5. Attach snapshot metadata
     result_dict["snapshot_id"] = snapshot.id
