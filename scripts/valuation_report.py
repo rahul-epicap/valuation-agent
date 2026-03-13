@@ -73,6 +73,63 @@ def format_forward_targets(resp: dict) -> str:
     return "\n".join(lines)
 
 
+def format_multi_factor(resp: dict) -> str:
+    """Format the multi_factor_results section as markdown."""
+    mf_results = resp.get("multi_factor_results")
+    if not mf_results:
+        return ""
+
+    lines: list[str] = []
+    lines.append("## Multi-Factor Regression\n")
+
+    # Build R² comparison vs single-factor
+    single_r2: dict[str, float] = {}
+    for reg in resp.get("regression", []):
+        spot = reg.get("spot_stats")
+        if spot:
+            single_r2[reg["metric_type"]] = spot["r2"]
+
+    # Summary table
+    lines.append(
+        "| Metric | Single R² | Multi R² | Improvement "
+        "| Growth Coeff | Factors | N |"
+    )
+    lines.append(
+        "|--------|----------|---------|-------------"
+        "|-------------|---------|---|"
+    )
+    for mf in mf_results:
+        mt = mf["metric_type"]
+        sf_r2 = single_r2.get(mt)
+        mf_r2 = mf["r2"]
+        delta = (mf_r2 - sf_r2) if sf_r2 is not None else None
+        sf_str = f"{sf_r2:.4f}" if sf_r2 is not None else "N/A"
+        delta_str = f"+{delta:.4f}" if delta is not None and delta > 0 else (
+            f"{delta:.4f}" if delta is not None else "N/A"
+        )
+        lines.append(
+            f"| {mt:<6} | {sf_str:<8} | {mf_r2:.4f}  | {delta_str:<11} "
+            f"| {mf['growth_coefficient']:.4f}       | {len(mf['factors']):<7} | {mf['n']} |"
+        )
+
+    # Factor coefficients per metric
+    for mf in mf_results:
+        factors = mf.get("factors", [])
+        if not factors:
+            continue
+        lines.append(f"\n### {mf['metric_type']} — Factor Coefficients\n")
+        lines.append("| Factor | Coefficient | Effect |")
+        lines.append("|--------|------------|--------|")
+        for f in sorted(factors, key=lambda x: abs(x["coefficient"]), reverse=True):
+            coeff = f["coefficient"]
+            sign = "+" if coeff >= 0 else "\u2212"
+            effect = f"{sign}{abs(coeff):.1f}x {'premium' if coeff >= 0 else 'discount'}"
+            lines.append(f"| {f['name']:<6} | {coeff:+.3f}     | {effect} |")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_synthesis(resp: dict) -> str:
     """Format a brief synthesis section summarizing key signals."""
     lines: list[str] = []
@@ -90,6 +147,27 @@ def format_synthesis(resp: dict) -> str:
             lines.append(f"  - Historical baseline: {hist:.1f}x")
         if actual is not None:
             lines.append(f"  - Current actual: {actual:.1f}x")
+
+    # Multi-factor signal (brief summary)
+    mf_results = resp.get("multi_factor_results")
+    if mf_results:
+        lines.append("- **Multi-Factor Regression:**")
+        for mf in mf_results:
+            sf_r2 = None
+            for reg in resp.get("regression", []):
+                if reg["metric_type"] == mf["metric_type"] and reg.get("spot_stats"):
+                    sf_r2 = reg["spot_stats"]["r2"]
+                    break
+            delta = (mf["r2"] - sf_r2) if sf_r2 is not None else None
+            delta_str = f" (+{delta:.4f})" if delta is not None and delta > 0 else ""
+            top_factors = sorted(mf.get("factors", []), key=lambda x: abs(x["coefficient"]), reverse=True)[:3]
+            factor_str = ", ".join(
+                f"{f['name']} {f['coefficient']:+.1f}x" for f in top_factors
+            )
+            lines.append(
+                f"  - {mf['metric_type']}: R\u00B2={mf['r2']:.4f}{delta_str}"
+                f"  [{factor_str}]"
+            )
 
     # DCF signal
     dcf = resp.get("dcf")
@@ -128,6 +206,7 @@ def run_valuation_report(
     forward_targets: list[dict] | None = None,
     current_price: float | None = None,
     snapshot_id: int | None = None,
+    regression_factors: list[str] | None = None,
 ) -> str:
     """Call the valuation API and return a formatted markdown report."""
     payload: dict = {
@@ -146,6 +225,8 @@ def run_valuation_report(
         payload["current_price"] = current_price
     if snapshot_id is not None:
         payload["snapshot_id"] = snapshot_id
+    if regression_factors:
+        payload["regression_factors"] = regression_factors
 
     resp = httpx.post(f"{api_url}/api/valuation/estimate", json=payload, timeout=60)
     resp.raise_for_status()
@@ -159,6 +240,7 @@ def run_valuation_report(
     sections.append("")
 
     sections.append(format_synthesis(data))
+    sections.append(format_multi_factor(data))
     sections.append(format_forward_targets(data))
 
     return "\n".join(sections)
@@ -204,6 +286,12 @@ def main() -> None:
     )
     parser.add_argument("--current-price", type=float, default=None)
     parser.add_argument("--snapshot-id", type=int, default=None)
+    parser.add_argument(
+        "--regression-factors",
+        type=str,
+        default=None,
+        help="JSON array of index names to use as regression factors (e.g. '[\"MSXXTECH\",\"MSXXMAG7\"]')",
+    )
 
     args = parser.parse_args()
 
@@ -215,6 +303,10 @@ def main() -> None:
     if args.forward_targets:
         fwd_targets = json.loads(args.forward_targets)
 
+    reg_factors = None
+    if args.regression_factors:
+        reg_factors = json.loads(args.regression_factors)
+
     report = run_valuation_report(
         api_url=args.api_url,
         ticker=args.ticker,
@@ -225,6 +317,7 @@ def main() -> None:
         forward_targets=fwd_targets,
         current_price=args.current_price,
         snapshot_id=args.snapshot_id,
+        regression_factors=reg_factors,
     )
     sys.stdout.write(report)
 
