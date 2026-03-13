@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
+from app.services import index_service
 from app.services.valuation_service import (
     compute_valuation_estimate,
     compute_spot_regression_multi_factor,
@@ -261,9 +262,11 @@ async def valuation_estimate(
 
     # 4. Multi-factor regression (if factors requested)
     if body.regression_factors:
-        # Validate factors against known indices in the snapshot
+        # Snapshot BYTEA doesn't include indices — load from index table
+        indices_map = await index_service.build_indices_map(db)
+
         known_indices: set[str] = set()
-        for idx_list in (data.get("indices") or {}).values():
+        for idx_list in indices_map.values():
             known_indices.update(idx_list)
         valid_factors = [f for f in body.regression_factors if f in known_indices]
 
@@ -274,7 +277,7 @@ async def valuation_estimate(
             mf_results = []
             for mt in metric_types:
                 mf = compute_spot_regression_multi_factor(
-                    data, mt, latest_di, all_tickers, valid_factors
+                    data, mt, latest_di, all_tickers, valid_factors, indices_map
                 )
                 if mf:
                     mf_results.append({"metric_type": mt, **mf})
