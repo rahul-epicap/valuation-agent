@@ -21,6 +21,19 @@ router = APIRouter(tags=["valuation"])
 # ---------------------------------------------------------------------------
 # Request model
 # ---------------------------------------------------------------------------
+class ForwardTargetInput(BaseModel):
+    horizon_years: int = Field(ge=1, le=10, description="Years forward (e.g. 2 or 5)")
+    eps_growth_at_horizon: float = Field(
+        description="Decimal EPS growth rate at that horizon (e.g. 0.15 for 15%)"
+    )
+    forward_eps_at_horizon: float = Field(
+        gt=0, description="Projected forward EPS at horizon (e.g. 12.50)"
+    )
+    revenue_growth_at_horizon: float | None = Field(
+        default=None, description="Revenue growth at horizon (context only)"
+    )
+
+
 class ValuationEstimateRequest(BaseModel):
     ticker: str | None = None
     revenue_growth: float  # decimal, 0.08 = 8%
@@ -37,6 +50,12 @@ class ValuationEstimateRequest(BaseModel):
     dcf_terminal_growth: float = Field(0.0, ge=-0.02, le=0.10)
     dcf_fade_period: int = Field(5, ge=1, le=15)
     snapshot_id: int | None = None
+    forward_targets: list[ForwardTargetInput] | None = Field(
+        default=None, max_length=5, description="Optional forward price target inputs"
+    )
+    current_price: float | None = Field(
+        default=None, gt=0, description="Current stock price for upside calculation"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +132,24 @@ class IndustryStats(PeerStats):
     industry: str | None = None
 
 
+class ForwardTargetResult(BaseModel):
+    horizon_years: int
+    eps_growth_at_horizon_pct: float
+    forward_eps_at_horizon: float
+    spot_implied_pe: float | None = None
+    spot_target_price: float | None = None
+    spot_regression_stats: RegressionStats | None = None
+    historical_implied_pe: float | None = None
+    historical_target_price: float | None = None
+    historical_regression_stats: RegressionStats | None = None
+    dcf_implied_pe: float | None = None
+    dcf_target_price: float | None = None
+    current_price: float | None = None
+    spot_upside_pct: float | None = None
+    historical_upside_pct: float | None = None
+    dcf_upside_pct: float | None = None
+
+
 class ValuationEstimateResponse(BaseModel):
     ticker: str | None = None
     industry: str | None = None
@@ -123,6 +160,7 @@ class ValuationEstimateResponse(BaseModel):
     dcf: DcfValuation | None = None
     peer_context: list[PeerStats]
     industry_context: list[IndustryStats] | None = None
+    forward_targets: list[ForwardTargetResult] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +219,12 @@ async def valuation_estimate(
             dcf_terminal_growth=body.dcf_terminal_growth,
             dcf_fade_period=body.dcf_fade_period,
             eps_growth_gaap=body.eps_growth_gaap,
+            forward_targets=(
+                [t.model_dump() for t in body.forward_targets]
+                if body.forward_targets
+                else None
+            ),
+            current_price=body.current_price,
         )
     except Exception as exc:
         logger.exception("Valuation computation failed")

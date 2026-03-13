@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
+from app.routes.valuation import ForwardTargetInput, ForwardTargetResult
 from app.services import index_service, similarity_service, valuation_service
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,12 @@ class PeerValuationRequest(BaseModel):
         default=None,
         max_length=2000,
         description="Optional business description for similarity search when ticker lacks a stored description",
+    )
+    forward_targets: list[ForwardTargetInput] | None = Field(
+        default=None, max_length=5, description="Optional forward price target inputs"
+    )
+    current_price: float | None = Field(
+        default=None, gt=0, description="Current stock price for upside calculation"
     )
 
 
@@ -106,6 +113,7 @@ class PeerValuationResponse(BaseModel):
     peer_stats: list[PeerDistributionStats]
     dcf: dict | None = None
     snapshot_id: int
+    forward_targets: list[ForwardTargetResult] | None = None
 
 
 @router.post("/valuation/peer-estimate", response_model=PeerValuationResponse)
@@ -189,6 +197,12 @@ async def peer_estimate(
         dcf_discount_rate=body.dcf_discount_rate,
         dcf_terminal_growth=body.dcf_terminal_growth,
         dcf_fade_period=body.dcf_fade_period,
+        forward_targets=(
+            [t.model_dump() for t in body.forward_targets]
+            if body.forward_targets
+            else None
+        ),
+        current_price=body.current_price,
     )
 
     result["snapshot_id"] = snapshot.id
