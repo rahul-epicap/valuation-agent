@@ -13,6 +13,7 @@ from app.db import get_db
 from app.models import Snapshot
 from app.services import index_service
 from app.services.valuation_service import (
+    CONTINUOUS_FACTORS,
     compute_valuation_estimate,
     compute_spot_regression_multi_factor,
 )
@@ -265,10 +266,10 @@ async def valuation_estimate(
         # Snapshot BYTEA doesn't include indices — load from index table
         indices_map = await index_service.build_indices_map(db)
 
-        known_indices: set[str] = set()
+        known_factors: set[str] = set(CONTINUOUS_FACTORS)
         for idx_list in indices_map.values():
-            known_indices.update(idx_list)
-        valid_factors = [f for f in body.regression_factors if f in known_indices]
+            known_factors.update(idx_list)
+        valid_factors = [f for f in body.regression_factors if f in known_factors]
 
         if valid_factors:
             all_tickers = data["tickers"]

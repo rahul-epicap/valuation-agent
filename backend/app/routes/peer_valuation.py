@@ -17,7 +17,10 @@ from app.routes.valuation import (
     MultiFactorResult,
 )
 from app.services import index_service, similarity_service, valuation_service
-from app.services.valuation_service import compute_spot_regression_multi_factor
+from app.services.valuation_service import (
+    CONTINUOUS_FACTORS,
+    compute_spot_regression_multi_factor,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["peer-valuation"])
@@ -221,13 +224,13 @@ async def peer_estimate(
 
     # Multi-factor regression (if factors requested)
     if body.regression_factors:
-        # Validate factors against known indices in the snapshot
-        known_indices = set()
+        # Validate factors against known indices + built-in continuous factors
+        known_factors: set[str] = set(CONTINUOUS_FACTORS)
         for idx_list in (data.get("indices") or {}).values():
-            known_indices.update(idx_list)
+            known_factors.update(idx_list)
         for idx_list in indices_map.values():
-            known_indices.update(idx_list)
-        valid_factors = [f for f in body.regression_factors if f in known_indices]
+            known_factors.update(idx_list)
+        valid_factors = [f for f in body.regression_factors if f in known_factors]
 
         if valid_factors:
             all_tickers = data["tickers"]
