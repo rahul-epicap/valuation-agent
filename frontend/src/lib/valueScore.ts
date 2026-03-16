@@ -445,21 +445,22 @@ export function computeAggregateComparison(
   epsGrMin: number | null,
   epsGrMax: number | null
 ): AggregateMethodResult[] {
-  const methods: RegressionMethodName[] = ['ols', 'trimmed', 'cooks', 'robust', 'logLinear'];
+  const methods: RegressionMethodName[] = ['ols', 'trimmed', 'cooks', 'robust', 'logLinear', 'ridgeEnhanced'];
   const labels: Record<RegressionMethodName, string> = {
     ols: 'OLS (Current)',
     trimmed: 'Residual Trimming',
     cooks: "Cook's Distance",
     robust: 'Robust (Huber)',
     logLinear: 'Log-Linear',
+    ridgeEnhanced: 'Ridge Enhanced',
   };
 
   // Collect per-period results for each method
   const buckets: Record<RegressionMethodName, ComparisonResult[]> = {
-    ols: [], trimmed: [], cooks: [], robust: [], logLinear: [],
+    ols: [], trimmed: [], cooks: [], robust: [], logLinear: [], ridgeEnhanced: [],
   };
   const winCounts: Record<RegressionMethodName, number> = {
-    ols: 0, trimmed: 0, cooks: 0, robust: 0, logLinear: 0,
+    ols: 0, trimmed: 0, cooks: 0, robust: 0, logLinear: 0, ridgeEnhanced: 0,
   };
 
   for (let di = 0; di < data.dates.length; di++) {

@@ -1,0 +1,13 @@
+# Cache directory (snapshot, FMP data, prepared dataset)
+.cache/
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.egg-info/

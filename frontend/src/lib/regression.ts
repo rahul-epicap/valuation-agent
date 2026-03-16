@@ -254,6 +254,236 @@ export function logLinearRegression(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Enhanced Ridge regression with winsorized features (autoresearch discovery)
+// ---------------------------------------------------------------------------
+
+function winsorize(arr: number[], lower = 5, upper = 95): number[] {
+  if (arr.length === 0) return arr;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const lo = sorted[Math.floor(arr.length * lower / 100)];
+  const hi = sorted[Math.ceil(arr.length * upper / 100) - 1];
+  return arr.map(v => Math.min(Math.max(v, lo), hi));
+}
+
+export interface EnhancedRegressionResult {
+  intercept: number;
+  coefficients: number[];
+  means: number[];
+  stds: number[];
+  featureNames: string[];
+  r2: number;
+  adjustedR2: number;
+  n: number;
+  predict: (growthPct: number, grossMargin?: number) => number;
+}
+
+/**
+ * Metric-specific Ridge regression with winsorized features.
+ * Discovered by autoresearch:
+ *   - P/EPS: growth%, positive_growth, |growth| (OOS R²=0.20)
+ *   - EV/Rev: growth%, gross_margin, growth×margin (OOS R²=0.14)
+ *   - EV/GP: growth%, positive_growth, log|growth|
+ *
+ * All use Ridge (lambda=10), feature standardization, and winsorization.
+ */
+export function ridgeEnhancedRegression(
+  pts: [number, number][],
+  metricType: string = 'evRev',
+  grossMargins?: number[],
+  lambda = 10.0,
+): EnhancedRegressionResult | null {
+  const n = pts.length;
+  if (n < 10) return null;
+
+  const isEps = metricType === 'pEPS' || metricType === 'pEPS_GAAP';
+
+  // Filter valid observations
+  const validIdx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const [x, y] = pts[i];
+    if (!isFinite(x) || !isFinite(y) || y <= 0) continue;
+    if (isEps && y >= 150) continue;
+    validIdx.push(i);
+  }
+  if (validIdx.length < 10) return null;
+
+  let growth = validIdx.map(i => pts[i][0]);
+  let mult = validIdx.map(i => pts[i][1]);
+  const nv = validIdx.length;
+
+  // Winsorize — tighter for PE
+  if (isEps) {
+    mult = winsorize(mult, 3, 97);
+    growth = winsorize(growth, 3, 97);
+  } else {
+    mult = winsorize(mult, 2, 98);
+    growth = winsorize(growth, 3, 97);
+  }
+
+  // Build metric-specific features
+  let featureNames: string[];
+  const X: number[][] = [];
+
+  if (isEps) {
+    // P/EPS: growth, positive indicator, absolute magnitude
+    featureNames = ['growth_pct_w', 'positive_growth', 'growth_abs'];
+    for (let i = 0; i < nv; i++) {
+      const g = growth[i];
+      X.push([g, g > 0 ? 1 : 0, Math.abs(g)]);
+    }
+  } else if (metricType === 'evRev') {
+    // EV/Rev: growth, gross margin, growth×margin
+    featureNames = ['growth_pct_w', 'gross_margin', 'growth_x_margin'];
+    const hasGM = grossMargins != null && grossMargins.length === pts.length;
+    let gmW: number[];
+    if (hasGM) {
+      const rawGM = validIdx.map(i => grossMargins![i]);
+      const finiteGM = rawGM.filter(v => isFinite(v));
+      const meanGM = finiteGM.length > 0
+        ? finiteGM.reduce((s, v) => s + v, 0) / finiteGM.length : 0;
+      gmW = winsorize(
+        rawGM.map(v => isFinite(v) ? v : meanGM), 3, 97
+      );
+    } else {
+      gmW = new Array(nv).fill(0);
+    }
+    for (let i = 0; i < nv; i++) {
+      const g = growth[i];
+      X.push([g, gmW[i], g * gmW[i]]);
+    }
+  } else {
+    // EV/GP: growth, positive indicator, log|growth|
+    featureNames = ['growth_pct_w', 'positive_growth', 'log_growth_abs'];
+    for (let i = 0; i < nv; i++) {
+      const g = growth[i];
+      X.push([g, g > 0 ? 1 : 0, Math.sign(g) * Math.log1p(Math.abs(g))]);
+    }
+  }
+
+  // Standardize features
+  const p = featureNames.length;
+  const means = new Array(p).fill(0);
+  const stds = new Array(p).fill(0);
+
+  for (let j = 0; j < p; j++) {
+    let sum = 0;
+    for (let i = 0; i < nv; i++) sum += X[i][j];
+    means[j] = sum / nv;
+  }
+  for (let j = 0; j < p; j++) {
+    let sumSq = 0;
+    for (let i = 0; i < nv; i++) sumSq += (X[i][j] - means[j]) ** 2;
+    stds[j] = Math.sqrt(sumSq / nv);
+    if (stds[j] < 1e-10) stds[j] = 1;
+  }
+  for (let i = 0; i < nv; i++) {
+    for (let j = 0; j < p; j++) {
+      X[i][j] = (X[i][j] - means[j]) / stds[j];
+    }
+  }
+
+  // Ridge: beta = (X'X + λI)⁻¹ X'y
+  const totalP = p + 1;
+  const XtX: number[][] = Array.from(
+    { length: totalP }, () => new Array(totalP).fill(0)
+  );
+  const Xty = new Array(totalP).fill(0);
+
+  for (let i = 0; i < nv; i++) {
+    const row = [1, ...X[i]];
+    const y = mult[i];
+    for (let a = 0; a < totalP; a++) {
+      Xty[a] += row[a] * y;
+      for (let b = 0; b < totalP; b++) {
+        XtX[a][b] += row[a] * row[b];
+      }
+    }
+  }
+  for (let j = 1; j < totalP; j++) {
+    XtX[j][j] += lambda;
+  }
+
+  const inv = invertMatrix(XtX);
+  if (!inv) return null;
+
+  const beta = new Array(totalP).fill(0);
+  for (let i = 0; i < totalP; i++) {
+    for (let j = 0; j < totalP; j++) {
+      beta[i] += inv[i][j] * Xty[j];
+    }
+  }
+
+  let sst = 0, sse = 0;
+  const yMean = mult.reduce((s, v) => s + v, 0) / nv;
+  for (let i = 0; i < nv; i++) {
+    sst += (mult[i] - yMean) ** 2;
+    let pred = beta[0];
+    for (let j = 0; j < p; j++) pred += X[i][j] * beta[j + 1];
+    sse += (mult[i] - pred) ** 2;
+  }
+  const r2 = sst > 0 ? 1 - sse / sst : 0;
+  const adjustedR2 = sst > 0 ? 1 - ((1 - r2) * (nv - 1)) / (nv - totalP) : 0;
+
+  const intercept = beta[0];
+  const coefficients = beta.slice(1);
+
+  return {
+    intercept,
+    coefficients,
+    means,
+    stds,
+    featureNames,
+    r2,
+    adjustedR2,
+    n: nv,
+    predict: (growthPct: number, grossMargin = 0) => {
+      const g = growthPct;
+      let raw: number[];
+      if (isEps) {
+        raw = [g, g > 0 ? 1 : 0, Math.abs(g)];
+      } else if (metricType === 'evRev') {
+        raw = [g, grossMargin, g * grossMargin];
+      } else {
+        raw = [g, g > 0 ? 1 : 0, Math.sign(g) * Math.log1p(Math.abs(g))];
+      }
+      let y = intercept;
+      for (let j = 0; j < p; j++) {
+        y += ((raw[j] - means[j]) / stds[j]) * coefficients[j];
+      }
+      return y;
+    },
+  };
+}
+
+/** Simple Gauss-Jordan matrix inversion (for Ridge normal equations). */
+function invertMatrix(M: number[][]): number[][] | null {
+  const n = M.length;
+  const aug: number[][] = M.map((row, i) => {
+    const r = [...row];
+    for (let j = 0; j < n; j++) r.push(i === j ? 1 : 0);
+    return r;
+  });
+  for (let col = 0; col < n; col++) {
+    let maxVal = Math.abs(aug[col][col]);
+    let maxRow = col;
+    for (let row = col + 1; row < n; row++) {
+      const val = Math.abs(aug[row][col]);
+      if (val > maxVal) { maxVal = val; maxRow = row; }
+    }
+    if (maxVal < 1e-12) return null;
+    if (maxRow !== col) [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+    const pivot = aug[col][col];
+    for (let j = 0; j < 2 * n; j++) aug[col][j] /= pivot;
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const f = aug[row][col];
+      for (let j = 0; j < 2 * n; j++) aug[row][j] -= f * aug[col][j];
+    }
+  }
+  return aug.map(row => row.slice(n));
+}
+
 /**
  * Runs all four regression methods on the same data and returns comparable results.
  */
@@ -335,6 +565,21 @@ export function compareRegressionMethods(
       slope: logLin.logSlope,
       intercept: logLin.logIntercept,
       predict: (x: number) => Math.exp(logLin.logIntercept + logLin.logSlope * x),
+    });
+  }
+
+  // 7. Ridge Enhanced (autoresearch — winsorized + growth features)
+  const ridge = ridgeEnhancedRegression(pts);
+  if (ridge) {
+    results.push({
+      method: 'ridgeEnhanced',
+      label: 'Ridge Enhanced',
+      r2: ridge.r2,
+      n: ridge.n,
+      nOriginal,
+      slope: ridge.coefficients[0],   // growth coefficient (standardized)
+      intercept: ridge.intercept,
+      predict: (x: number) => ridge.predict(x),
     });
   }
 

@@ -37,7 +37,7 @@ export interface CooksRegressionResult extends RegressionResult {
   removedIndices: number[];
 }
 
-export type RegressionMethodName = 'ols' | 'trimmed' | 'cooks' | 'robust' | 'logLinear';
+export type RegressionMethodName = 'ols' | 'trimmed' | 'cooks' | 'robust' | 'logLinear' | 'ridgeEnhanced';
 
 export interface ComparisonResult {
   method: RegressionMethodName;

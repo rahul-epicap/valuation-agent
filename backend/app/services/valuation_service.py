@@ -81,6 +81,173 @@ def linear_regression(
 
 
 # ---------------------------------------------------------------------------
+# 1b. Enhanced regression — metric-specific Ridge with winsorization
+# ---------------------------------------------------------------------------
+def _winsorize(arr: np.ndarray, lower: float = 5, upper: float = 95) -> np.ndarray:
+    """Winsorize array at given percentiles."""
+    if len(arr) == 0:
+        return arr
+    lo = np.percentile(arr, lower)
+    hi = np.percentile(arr, upper)
+    return np.clip(arr, lo, hi)
+
+
+def enhanced_regression(
+    pts: list[dict],
+    data: dict | None = None,
+    metric_type: str = "evRev",
+    di: int = 0,
+) -> dict | None:
+    """Metric-specific Ridge regression with winsorized features.
+
+    Discovered by autoresearch. Uses different feature sets per metric:
+      - P/EPS: growth%, positive_growth indicator, |growth| (OOS R²=0.20)
+      - EV/Rev: growth%, gross_margin, growth×margin (OOS R²=0.14)
+      - EV/GP: growth%, positive_growth indicator, log|growth|
+
+    All metrics use Ridge (lambda=10), feature standardization, and
+    winsorization for temporal stability across market regimes.
+
+    Args:
+        pts: List of dicts with 'x' (growth%), 'y' (multiple), 't' (ticker).
+        data: Dashboard data dict (needed for gross margin on EV/Rev).
+        metric_type: One of 'evRev', 'evGP', 'pEPS', 'pEPS_GAAP'.
+        di: Date index for gross margin lookup.
+
+    Returns:
+        Dict with coefficients, r2, adjusted_r2, n, feature_names, etc.
+    """
+    n = len(pts)
+    if n < 10:
+        return None
+
+    growth = np.array([p["x"] for p in pts])
+    mult = np.array([p["y"] for p in pts])
+
+    is_eps = metric_type in ("pEPS", "pEPS_GAAP")
+
+    # Filter valid observations
+    if is_eps:
+        valid = (mult > 0) & (mult < 150) & np.isfinite(mult) & np.isfinite(growth)
+    else:
+        valid = (mult > 0) & np.isfinite(mult) & np.isfinite(growth)
+
+    # For EV/Rev, compute gross margin and require it
+    has_gm = False
+    gm_arr = None
+    if metric_type == "evRev" and data is not None:
+        fm = data["fm"]
+        gm_vals = []
+        for i_pt in range(n):
+            if not valid[i_pt]:
+                gm_vals.append(float("nan"))
+                continue
+            t = pts[i_pt]["t"]
+            d = fm.get(t, {})
+            er_arr = d.get("er", [])
+            eg_arr = d.get("eg", [])
+            er = er_arr[di] if di < len(er_arr) else None
+            eg = eg_arr[di] if di < len(eg_arr) else None
+            if er is not None and eg is not None and eg > 0:
+                gm_vals.append(er / eg)
+            else:
+                gm_vals.append(float("nan"))
+        gm_arr = np.array(gm_vals)
+        gm_valid = np.isfinite(gm_arr) & (gm_arr > 0) & (gm_arr < 1.5)
+        if gm_valid.sum() > 0.5 * valid.sum():
+            valid = valid & gm_valid
+            has_gm = True
+
+    if valid.sum() < 10:
+        return None
+
+    growth = growth[valid]
+    mult = mult[valid]
+    n = len(growth)
+
+    # Winsorize — tighter for PE (fat tails)
+    if is_eps:
+        mult_w = _winsorize(mult, 3, 97)
+        growth_w = _winsorize(growth, 3, 97)
+    else:
+        mult_w = _winsorize(mult, 2, 98)
+        growth_w = _winsorize(growth, 3, 97)
+
+    # Build metric-specific features
+    if is_eps:
+        # P/EPS: growth, positive indicator, absolute magnitude
+        f1 = growth_w
+        f2 = (growth_w > 0).astype(float)
+        f3 = np.abs(growth_w)
+        X = np.column_stack([f1, f2, f3])
+        feature_names = ["growth_pct_w", "positive_growth", "growth_abs"]
+
+    elif metric_type == "evRev":
+        # EV/Rev: growth, gross margin, growth×margin
+        f1 = growth_w
+        if has_gm:
+            gm = gm_arr[valid]
+            f2 = _winsorize(gm, 3, 97)
+        else:
+            f2 = np.zeros_like(f1)
+        f3 = f1 * f2
+        X = np.column_stack([f1, f2, f3])
+        feature_names = ["growth_pct_w", "gross_margin", "growth_x_margin"]
+
+    else:
+        # EV/GP: growth, positive indicator, log|growth|
+        f1 = growth_w
+        f2 = (growth_w > 0).astype(float)
+        f3 = np.sign(growth_w) * np.log1p(np.abs(growth_w))
+        X = np.column_stack([f1, f2, f3])
+        feature_names = ["growth_pct_w", "positive_growth", "log_growth_abs"]
+
+    # Standardize features for proper regularization
+    means = np.mean(X, axis=0)
+    stds = np.std(X, axis=0)
+    stds[stds < 1e-10] = 1.0
+    X_std = (X - means) / stds
+
+    # Ridge regression: beta = (X'X + lambda*I)^{-1} X'y
+    ones = np.ones((n, 1))
+    X_aug = np.hstack([ones, X_std])
+    lam = 10.0
+    XtX = X_aug.T @ X_aug
+    reg_mat = lam * np.eye(XtX.shape[0])
+    reg_mat[0, 0] = 0  # don't regularize intercept
+
+    try:
+        beta = np.linalg.solve(XtX + reg_mat, X_aug.T @ mult_w)
+    except np.linalg.LinAlgError:
+        beta, _, _, _ = np.linalg.lstsq(X_aug, mult_w, rcond=None)
+
+    intercept = float(beta[0])
+    coefficients = beta[1:]
+
+    # Compute R² and adjusted R²
+    y_pred = X_aug @ beta
+    ss_res = np.sum((mult_w - y_pred) ** 2)
+    ss_tot = np.sum((mult_w - np.mean(mult_w)) ** 2)
+    r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+    p = X_aug.shape[1]
+    adj_r2 = float(1 - (1 - r2) * (n - 1) / (n - p)) if n > p else 0.0
+
+    return {
+        "intercept": intercept,
+        "coefficients": coefficients.tolist(),
+        "means": means.tolist(),
+        "stds": stds.tolist(),
+        "feature_names": feature_names,
+        "r2": r2,
+        "adjusted_r2": adj_r2,
+        "n": n,
+        "p": p,
+        "method": "ridge_enhanced",
+        "has_gross_margin": has_gm,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 2. EPS quality check
 # ---------------------------------------------------------------------------
 def ok_eps(data: dict, ticker: str, di: int, metric_type: str = "pEPS") -> bool:
