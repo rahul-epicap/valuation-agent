@@ -13,10 +13,11 @@ import {
   Legend,
   TooltipItem,
 } from 'chart.js';
-import { DashboardData, COLORS, METRIC_TITLES, Y_LABELS, X_LABELS, HIGHLIGHT_COLORS } from '../lib/types';
+import { DashboardData, COLORS, METRIC_TITLES, Y_LABELS, X_LABELS, HIGHLIGHT_COLORS, MultiFactorRegressionResult, MultiFactorScatterPoint } from '../lib/types';
 import { Action, DashboardState } from '../hooks/useDashboardState';
-import { getActiveTickers, filterPoints } from '../lib/filters';
+import { getActiveTickers, filterPoints, filterPointsMultiFactor } from '../lib/filters';
 import { linearRegressionCooks } from '../lib/regression';
+import { multiFactorOLS, computeAdjustedPoints } from '../lib/multiFactorRegression';
 import MetricToggle from './MetricToggle';
 import RegressionStats from './RegressionStats';
 
@@ -37,9 +38,14 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     [data, state.exTk, state.indOn, state.idxOn]
   );
 
+  const mfActive = useMemo(() => state.mfEnabled && state.regFactors.size > 0, [state.mfEnabled, state.regFactors]);
+  const regFactorArray = useMemo(() => [...state.regFactors], [state.regFactors]);
+
   const pts = useMemo(
-    () => filterPoints(data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax),
-    [data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax]
+    () => mfActive
+      ? filterPointsMultiFactor(data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, regFactorArray)
+      : filterPoints(data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax),
+    [data, type, state.di, activeTickers, state.revGrMin, state.revGrMax, state.epsGrMin, state.epsGrMax, mfActive, regFactorArray]
   );
 
   const regression = useMemo(
@@ -47,35 +53,63 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     [pts]
   );
 
+  const mfRegression: MultiFactorRegressionResult | null = useMemo(() => {
+    if (!mfActive || pts.length < 3) return null;
+    const mfPts = pts as MultiFactorScatterPoint[];
+    const y = mfPts.map((p) => p.y);
+    const X = mfPts.map((p) => {
+      const row = [1, p.x]; // intercept + growth
+      for (const factor of regFactorArray) {
+        row.push(p.factorValues?.[factor] ?? 0);
+      }
+      return row;
+    });
+    return multiFactorOLS(y, X, regFactorArray);
+  }, [mfActive, pts, regFactorArray]);
+
+  const adjustedPts: MultiFactorScatterPoint[] = useMemo(() => {
+    if (!mfActive || !mfRegression) return pts as MultiFactorScatterPoint[];
+    return computeAdjustedPoints(pts as MultiFactorScatterPoint[], mfRegression);
+  }, [mfActive, mfRegression, pts]);
+
   const { datasets, hlLegend } = useMemo(() => {
-    const removedSet = new Set(regression?.removedIndices ?? []);
+    const useMf = mfActive && mfRegression != null;
+    const displayPts = useMf ? adjustedPts : pts;
+    const removedSet = new Set(useMf ? [] : (regression?.removedIndices ?? []));
     const hlA = [...state.hlTk];
     const hlCM: Record<string, string> = {};
     hlA.forEach((tk, i) => (hlCM[tk] = HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length]));
 
     // Separate points: normal kept, Cook's outliers, and highlighted
-    const norm: typeof pts = [];
-    const outliers: typeof pts = [];
-    pts.forEach((p, i) => {
-      if (state.hlTk.has(p.t)) return; // highlighted handled separately
+    type DisplayPoint = typeof displayPts[number];
+    const norm: DisplayPoint[] = [];
+    const outliers: DisplayPoint[] = [];
+    displayPts.forEach((p, i) => {
+      if (state.hlTk.has(p.t)) return;
       if (removedSet.has(i)) {
         outliers.push(p);
       } else {
         norm.push(p);
       }
     });
-    const hlP = pts.filter((p) => state.hlTk.has(p.t));
+    const hlP = displayPts.filter((p) => state.hlTk.has(p.t));
 
-    const xs = pts.map((p) => p.x);
+    // Get y-value for display (adjustedY in MF mode, raw y otherwise)
+    const getY = (p: DisplayPoint): number =>
+      useMf ? ((p as MultiFactorScatterPoint).adjustedY ?? p.y) : p.y;
+
+    const xs = displayPts.map((p) => p.x);
     const xMin = xs.length > 0 ? Math.min(...xs) : 0;
     const xMax = xs.length > 0 ? Math.max(...xs) : 100;
-    const sl = regression?.slope ?? 0;
-    const ic = regression?.intercept ?? 0;
+
+    // Regression line coefficients
+    const sl = useMf ? mfRegression!.growthCoefficient : (regression?.slope ?? 0);
+    const ic = useMf ? mfRegression!.intercept : (regression?.intercept ?? 0);
 
     const ds: ChartDataset<'scatter'>[] = [
       {
         label: 'Tickers',
-        data: norm.map((p) => ({ x: p.x, y: p.y, t: p.t })),
+        data: norm.map((p) => ({ x: p.x, y: getY(p), t: p.t })),
         backgroundColor: 'rgba(255,255,255,.12)',
         borderColor: 'rgba(255,255,255,.2)',
         borderWidth: 1,
@@ -85,11 +119,11 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
       },
     ];
 
-    // Cook's Distance outliers — shown as red crossed-out dots
+    // Cook's Distance outliers — shown as red crossed-out dots (single-factor mode only)
     if (outliers.length > 0) {
       ds.push({
         label: "Cook's Outliers",
-        data: outliers.map((p) => ({ x: p.x, y: p.y, t: p.t })),
+        data: outliers.map((p) => ({ x: p.x, y: getY(p), t: p.t })),
         backgroundColor: 'rgba(239,68,68,.25)',
         borderColor: 'rgba(239,68,68,.5)',
         borderWidth: 1.5,
@@ -102,7 +136,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
 
     ds.push({
       label: 'Regression',
-      data: pts.length >= 3 ? [{ x: xMin, y: sl * xMin + ic }, { x: xMax, y: sl * xMax + ic }] : [],
+      data: displayPts.length >= 3 ? [{ x: xMin, y: sl * xMin + ic }, { x: xMax, y: sl * xMax + ic }] : [],
       borderColor: col.l,
       borderWidth: 2,
       borderDash: [6, 3],
@@ -120,7 +154,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
       const c = hlCM[tk];
       ds.push({
         label: tk,
-        data: tp.map((p) => ({ x: p.x, y: p.y, t: p.t })),
+        data: tp.map((p) => ({ x: p.x, y: getY(p), t: p.t })),
         backgroundColor: c,
         borderColor: c,
         borderWidth: 2,
@@ -137,7 +171,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     }));
 
     return { datasets: ds, hlLegend: legend };
-  }, [pts, state.hlTk, regression, col]);
+  }, [pts, adjustedPts, mfActive, mfRegression, state.hlTk, regression, col]);
 
   const options: ChartOptions<'scatter'> = {
     responsive: true,
@@ -176,7 +210,10 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
     },
   };
 
-  const nRemoved = regression?.removedIndices?.length ?? 0;
+  const nRemoved = (mfActive && mfRegression) ? 0 : (regression?.removedIndices?.length ?? 0);
+  const mfSubtitle = mfActive && mfRegression
+    ? `Partial regression — controlling for ${mfRegression.factors.map((f) => f.name).join(', ')}`
+    : "Cook's Distance regression — outliers shown as red ✕";
 
   return (
     <div>
@@ -186,7 +223,7 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
             {METRIC_TITLES[type]}
           </div>
           <div style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '1px' }}>
-            Cook&apos;s Distance regression — outliers shown as red ✕
+            {mfSubtitle}
           </div>
         </div>
         <MetricToggle active={type} onChange={(t) => dispatch({ type: 'SET_REG', payload: t })} />
@@ -197,6 +234,8 @@ export default function RegressionChart({ data, state, dispatch }: RegressionCha
         metricType={type}
         nRemoved={nRemoved}
         activeIndexNames={[...state.idxOn]}
+        mfRegression={mfActive ? mfRegression : null}
+        singleFactorR2={regression?.r2 ?? null}
       />
       <div className="relative w-full h-[260px] md:h-[380px]">
         <Scatter data={{ datasets }} options={options} />

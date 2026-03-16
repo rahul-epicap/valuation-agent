@@ -11,7 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
+from app.routes.valuation import (
+    ForwardTargetInput,
+    ForwardTargetResult,
+    MultiFactorResult,
+)
 from app.services import index_service, similarity_service, valuation_service
+from app.services.valuation_service import (
+    CONTINUOUS_FACTORS,
+    compute_spot_regression_multi_factor,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["peer-valuation"])
@@ -36,6 +45,17 @@ class PeerValuationRequest(BaseModel):
         default=None,
         max_length=2000,
         description="Optional business description for similarity search when ticker lacks a stored description",
+    )
+    forward_targets: list[ForwardTargetInput] | None = Field(
+        default=None, max_length=5, description="Optional forward price target inputs"
+    )
+    current_price: float | None = Field(
+        default=None, gt=0, description="Current stock price for upside calculation"
+    )
+    regression_factors: list[str] | None = Field(
+        default=None,
+        max_length=50,
+        description="Index names to use as multi-factor regression dummies",
     )
 
 
@@ -106,6 +126,8 @@ class PeerValuationResponse(BaseModel):
     peer_stats: list[PeerDistributionStats]
     dcf: dict | None = None
     snapshot_id: int
+    forward_targets: list[ForwardTargetResult] | None = None
+    multi_factor_results: list[MultiFactorResult] | None = None
 
 
 @router.post("/valuation/peer-estimate", response_model=PeerValuationResponse)
@@ -136,6 +158,8 @@ async def peer_estimate(
         raise HTTPException(status_code=404, detail="No snapshot found")
 
     data = snapshot.get_data()
+    if data is None:
+        raise HTTPException(status_code=404, detail="Snapshot has no dashboard data")
     if body.ticker not in data.get("tickers", []):
         raise HTTPException(
             status_code=404,
@@ -187,9 +211,38 @@ async def peer_estimate(
         dcf_discount_rate=body.dcf_discount_rate,
         dcf_terminal_growth=body.dcf_terminal_growth,
         dcf_fade_period=body.dcf_fade_period,
+        forward_targets=(
+            [t.model_dump() for t in body.forward_targets]
+            if body.forward_targets
+            else None
+        ),
+        current_price=body.current_price,
     )
 
     result["snapshot_id"] = snapshot.id
     result["industry"] = data.get("industries", {}).get(body.ticker)
+
+    # Multi-factor regression (if factors requested)
+    if body.regression_factors:
+        # Validate factors against known indices + built-in continuous factors
+        known_factors: set[str] = set(CONTINUOUS_FACTORS)
+        for idx_list in (data.get("indices") or {}).values():
+            known_factors.update(idx_list)
+        for idx_list in indices_map.values():
+            known_factors.update(idx_list)
+        valid_factors = [f for f in body.regression_factors if f in known_factors]
+
+        if valid_factors:
+            all_tickers = data["tickers"]
+            latest_di = len(data["dates"]) - 1
+            metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
+            mf_results = []
+            for mt in metric_types:
+                mf = compute_spot_regression_multi_factor(
+                    data, mt, latest_di, all_tickers, valid_factors, indices_map
+                )
+                if mf:
+                    mf_results.append({"metric_type": mt, **mf})
+            result["multi_factor_results"] = mf_results if mf_results else None
 
     return result

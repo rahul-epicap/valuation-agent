@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 MULTIPLE_KEYS: dict[str, str] = {
     "evRev": "er",
     "evGP": "eg",
@@ -26,6 +28,8 @@ METRIC_LABELS: dict[str, str] = {
     "pEPS": "Price / EPS",
     "pEPS_GAAP": "P / GAAP EPS",
 }
+
+CONTINUOUS_FACTORS: set[str] = {"GROSS_MARGIN"}
 
 
 def _resolve_eps_keys(metric_type: str, d: dict) -> tuple[str, str]:
@@ -147,6 +151,222 @@ def filter_points(
         pts.append({"x": g_pct, "y": m, "t": t})
 
     return pts
+
+
+# ---------------------------------------------------------------------------
+# 3b. Multi-factor filter: enrich scatter points with factor dummy values
+# ---------------------------------------------------------------------------
+def filter_points_multi_factor(
+    data: dict,
+    metric_type: str,
+    di: int,
+    tickers: list[str],
+    active_factors: list[str],
+    indices_map: dict[str, list[str]] | None = None,
+) -> list[dict]:
+    """Reuses filter_points, then attaches factorValues for each point.
+
+    indices_map: {ticker: [index_short_names]} — if None, uses data['indices'].
+    """
+    base_pts = filter_points(data, metric_type, di, tickers)
+    if not active_factors:
+        return base_pts
+
+    idx_map = indices_map or data.get("indices", {})
+    index_factors = [f for f in active_factors if f not in CONTINUOUS_FACTORS]
+    has_gm = "GROSS_MARGIN" in active_factors
+
+    enriched: list[dict] = []
+    for pt in base_pts:
+        fv: dict[str, float] = {}
+
+        # Index dummies
+        if index_factors:
+            ticker_indices = set(idx_map.get(pt["t"], []))
+            for f in index_factors:
+                fv[f] = 1 if f in ticker_indices else 0
+
+        # Gross margin: er / eg = (EV/Rev) / (EV/GP) = GP/Rev
+        if has_gm:
+            d = data["fm"].get(pt["t"], {})
+            er_arr = d.get("er", [])
+            eg_arr = d.get("eg", [])
+            er = er_arr[di] if di < len(er_arr) else None
+            eg = eg_arr[di] if di < len(eg_arr) else None
+            if er is not None and eg is not None and eg > 0:
+                fv["GROSS_MARGIN"] = er / eg
+            else:
+                fv["GROSS_MARGIN"] = float("nan")
+
+        enriched.append({**pt, "factorValues": fv})
+
+    # Mean-impute missing gross margin
+    if has_gm:
+        valid_gm = [
+            p["factorValues"]["GROSS_MARGIN"]
+            for p in enriched
+            if not math.isnan(p["factorValues"]["GROSS_MARGIN"])
+        ]
+        mean_gm = sum(valid_gm) / len(valid_gm) if valid_gm else 0.0
+        for p in enriched:
+            if math.isnan(p["factorValues"]["GROSS_MARGIN"]):
+                p["factorValues"]["GROSS_MARGIN"] = mean_gm
+
+    return enriched
+
+
+# ---------------------------------------------------------------------------
+# 3c. Multi-factor OLS regression via NumPy
+# ---------------------------------------------------------------------------
+def multi_factor_ols(
+    y: list[float],
+    X: list[list[float]],
+    factor_names: list[str],
+) -> dict | None:
+    """Multi-factor OLS using NumPy lstsq.
+
+    X columns: [0]=intercept, [1]=growth%, [2+]=factor dummies.
+    Drops factors with < 3 members or zero variance before solving.
+
+    Returns dict with intercept, growth_coefficient, factors, r2, adjusted_r2, n, p.
+    """
+    n = len(y)
+    if n < 3:
+        return None
+
+    X_arr = np.array(X, dtype=np.float64)
+    y_arr = np.array(y, dtype=np.float64)
+
+    # Filter factors: keep only columns with >= 3 non-zero and non-zero variance
+    kept_indices: list[int] = []
+    kept_names: list[str] = []
+    for i, name in enumerate(factor_names):
+        col_idx = i + 2
+        col = X_arr[:, col_idx]
+        if np.count_nonzero(col) < 3:
+            continue
+        if np.var(col) < 1e-12:
+            continue
+        kept_indices.append(i)
+        kept_names.append(name)
+
+    # Build filtered X: intercept + growth + kept factors
+    cols = [X_arr[:, 0], X_arr[:, 1]]
+    for i in kept_indices:
+        cols.append(X_arr[:, i + 2])
+    Xf = np.column_stack(cols)
+
+    p = Xf.shape[1]
+    if n <= p:
+        return None
+
+    # Solve via lstsq
+    beta, residuals, rank, sv = np.linalg.lstsq(Xf, y_arr, rcond=None)
+    if rank < p:
+        return None
+
+    # Compute R² and adjusted R²
+    y_mean = np.mean(y_arr)
+    sst = np.sum((y_arr - y_mean) ** 2)
+    y_pred = Xf @ beta
+    sse = np.sum((y_arr - y_pred) ** 2)
+
+    r2 = float(1 - sse / sst) if sst > 0 else 0.0
+    adjusted_r2 = float(1 - ((1 - r2) * (n - 1)) / (n - p)) if sst > 0 else 0.0
+
+    factors = [
+        {
+            "name": name,
+            "type": "continuous" if name in CONTINUOUS_FACTORS else "binary",
+            "coefficient": float(beta[i + 2]),
+        }
+        for i, name in enumerate(kept_names)
+    ]
+
+    return {
+        "intercept": float(beta[0]),
+        "growth_coefficient": float(beta[1]),
+        "factors": factors,
+        "r2": r2,
+        "adjusted_r2": adjusted_r2,
+        "n": n,
+        "p": p,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 3d. Spot regression with multi-factor support
+# ---------------------------------------------------------------------------
+def compute_spot_regression_multi_factor(
+    data: dict,
+    metric_type: str,
+    di: int,
+    tickers: list[str],
+    active_factors: list[str],
+    indices_map: dict[str, list[str]] | None = None,
+) -> dict | None:
+    """Run multi-factor OLS at a single date."""
+    pts = filter_points_multi_factor(
+        data, metric_type, di, tickers, active_factors, indices_map
+    )
+    if len(pts) < 3:
+        return None
+
+    y = [p["y"] for p in pts]
+    X = []
+    for p in pts:
+        row = [1.0, p["x"]]
+        fv = p.get("factorValues", {})
+        for f in active_factors:
+            row.append(float(fv.get(f, 0)))
+        X.append(row)
+
+    return multi_factor_ols(y, X, active_factors)
+
+
+# ---------------------------------------------------------------------------
+# 3e. Historical baseline with multi-factor support
+# ---------------------------------------------------------------------------
+def compute_historical_baseline_multi_factor(
+    data: dict,
+    metric_type: str,
+    tickers: list[str],
+    active_factors: list[str],
+    indices_map: dict[str, list[str]] | None = None,
+) -> dict | None:
+    """Average multi-factor regression across all dates."""
+    total_growth_coeff = 0.0
+    total_intercept = 0.0
+    total_r2 = 0.0
+    total_adj_r2 = 0.0
+    total_n = 0.0
+    period_count = 0
+
+    for di in range(len(data["dates"])):
+        reg = compute_spot_regression_multi_factor(
+            data, metric_type, di, tickers, active_factors, indices_map
+        )
+        if reg is None:
+            continue
+
+        total_growth_coeff += reg["growth_coefficient"]
+        total_intercept += reg["intercept"]
+        total_r2 += reg["r2"]
+        total_adj_r2 += reg["adjusted_r2"]
+        total_n += reg["n"]
+        period_count += 1
+
+    if period_count < 1:
+        return None
+
+    return {
+        "avg_growth_coefficient": total_growth_coeff / period_count,
+        "avg_intercept": total_intercept / period_count,
+        "avg_r2": total_r2 / period_count,
+        "avg_adjusted_r2": total_adj_r2 / period_count,
+        "avg_n": total_n / period_count,
+        "period_count": period_count,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +680,8 @@ def compute_valuation_estimate(
     dcf_terminal_growth: float = 0.0,
     dcf_fade_period: int = 5,
     eps_growth_gaap: float | None = None,
+    forward_targets: list[dict] | None = None,
+    current_price: float | None = None,
 ) -> dict:
     """Compute regression-implied multiples, DCF, and peer context.
 
@@ -647,6 +869,18 @@ def compute_valuation_estimate(
             stats["industry"] = industry
             industry_context.append(stats)
 
+    # ---- Forward price targets ----
+    forward_target_results: list[dict] | None = None
+    if forward_targets:
+        forward_target_results = compute_forward_targets(
+            data=data,
+            targets=forward_targets,
+            current_price=current_price,
+            dcf_discount_rate=dcf_discount_rate,
+            dcf_terminal_growth=dcf_terminal_growth,
+            dcf_fade_period=dcf_fade_period,
+        )
+
     return {
         "ticker": ticker,
         "industry": industry,
@@ -655,11 +889,159 @@ def compute_valuation_estimate(
         "dcf": dcf_result,
         "peer_context": peer_context,
         "industry_context": industry_context,
+        "forward_targets": forward_target_results,
     }
 
 
 # ---------------------------------------------------------------------------
-# 13. Index-based regression
+# 13. DCF at horizon (reuses compute_dcf for a future starting point)
+# ---------------------------------------------------------------------------
+def compute_dcf_at_horizon(
+    forward_eps_at_horizon: float,
+    eps_growth_at_horizon: float,
+    discount_rate: float = 0.10,
+    terminal_growth: float = 0.0,
+    fade_period: int = 5,
+) -> float | None:
+    """Compute DCF-implied P/E starting from a future horizon's EPS and growth.
+
+    Uses compute_dcf() with a single-year growth estimate (the horizon-year
+    growth rate), then fades to terminal.  Returns implied P/E or None.
+    """
+    result = compute_dcf(
+        forward_eps=forward_eps_at_horizon,
+        eps_growth_estimates=[eps_growth_at_horizon],
+        discount_rate=discount_rate,
+        terminal_growth=terminal_growth,
+        fade_period=fade_period,
+    )
+    if result is None:
+        return None
+    return result["implied_pe"]
+
+
+# ---------------------------------------------------------------------------
+# 14. Forward price targets
+# ---------------------------------------------------------------------------
+def compute_forward_targets(
+    data: dict,
+    targets: list[dict],
+    current_price: float | None = None,
+    dcf_discount_rate: float = 0.10,
+    dcf_terminal_growth: float = 0.0,
+    dcf_fade_period: int = 5,
+) -> list[dict]:
+    """Compute regression-implied and DCF target prices at future horizons.
+
+    For each target horizon:
+      1. Spot P/EPS regression (full universe, latest date)
+      2. Historical baseline P/EPS regression (avg across all dates)
+      3. DCF cross-check via compute_dcf_at_horizon()
+      4. target_price = implied_pe * forward_eps_at_horizon
+      5. upside_pct = (target_price / current_price - 1) * 100
+
+    Regressions are cached across targets (same universe-wide regression).
+    """
+    if not targets:
+        return []
+
+    all_tickers: list[str] = data["tickers"]
+    latest_di = len(data["dates"]) - 1
+
+    # Cache spot + historical P/EPS regressions (same for all horizons)
+    spot = compute_spot_regression(data, "pEPS", latest_di, all_tickers)
+    hist = compute_historical_baseline(data, "pEPS", all_tickers)
+
+    spot_stats: dict | None = None
+    if spot:
+        spot_stats = {
+            "slope": spot["slope"],
+            "intercept": spot["intercept"],
+            "r2": spot["r2"],
+            "n": spot["n"],
+        }
+
+    hist_stats: dict | None = None
+    if hist:
+        hist_stats = {
+            "slope": hist["avg_slope"],
+            "intercept": hist["avg_intercept"],
+            "r2": hist["avg_r2"],
+            "n": hist["avg_n"],
+        }
+
+    results: list[dict] = []
+    for t in targets:
+        horizon_years = t["horizon_years"]
+        eps_growth = t["eps_growth_at_horizon"]
+        fwd_eps = t["forward_eps_at_horizon"]
+        growth_pct = eps_growth * 100
+
+        # Spot regression-implied P/E
+        spot_pe: float | None = None
+        spot_target: float | None = None
+        if spot:
+            spot_pe = spot["slope"] * growth_pct + spot["intercept"]
+            if spot_pe is not None and spot_pe > 0:
+                spot_target = spot_pe * fwd_eps
+
+        # Historical regression-implied P/E
+        hist_pe: float | None = None
+        hist_target: float | None = None
+        if hist:
+            hist_pe = hist["avg_slope"] * growth_pct + hist["avg_intercept"]
+            if hist_pe is not None and hist_pe > 0:
+                hist_target = hist_pe * fwd_eps
+
+        # DCF cross-check
+        dcf_pe = compute_dcf_at_horizon(
+            forward_eps_at_horizon=fwd_eps,
+            eps_growth_at_horizon=eps_growth,
+            discount_rate=dcf_discount_rate,
+            terminal_growth=dcf_terminal_growth,
+            fade_period=dcf_fade_period,
+        )
+        dcf_target: float | None = None
+        if dcf_pe is not None and dcf_pe > 0:
+            dcf_target = dcf_pe * fwd_eps
+
+        # Upside calculations
+        spot_upside: float | None = None
+        hist_upside: float | None = None
+        dcf_upside: float | None = None
+        if current_price is not None and current_price > 0:
+            if spot_target is not None:
+                spot_upside = (spot_target / current_price - 1) * 100
+            if hist_target is not None:
+                hist_upside = (hist_target / current_price - 1) * 100
+            if dcf_target is not None:
+                dcf_upside = (dcf_target / current_price - 1) * 100
+
+        results.append(
+            {
+                "horizon_years": horizon_years,
+                "eps_growth_at_horizon_pct": growth_pct,
+                "forward_eps_at_horizon": fwd_eps,
+                "spot_implied_pe": spot_pe,
+                "spot_target_price": spot_target,
+                "spot_regression_stats": spot_stats,
+                "historical_implied_pe": hist_pe,
+                "historical_target_price": hist_target,
+                "historical_regression_stats": hist_stats,
+                "dcf_implied_pe": dcf_pe,
+                "dcf_target_price": dcf_target,
+                "current_price": current_price,
+                "spot_upside_pct": spot_upside,
+                "historical_upside_pct": hist_upside,
+                "dcf_upside_pct": dcf_upside,
+            }
+        )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 15. Index-based regression
 # ---------------------------------------------------------------------------
 def compute_index_regression(
     data: dict,
@@ -711,6 +1093,8 @@ def compute_peer_valuation(
     dcf_discount_rate: float = 0.10,
     dcf_terminal_growth: float = 0.0,
     dcf_fade_period: int = 5,
+    forward_targets: list[dict] | None = None,
+    current_price: float | None = None,
 ) -> dict:
     """Orchestrate peer-based valuation with index regressions.
 
@@ -950,6 +1334,18 @@ def compute_peer_valuation(
             current_pe=current_pe,
         )
 
+    # Forward price targets
+    forward_target_results: list[dict] | None = None
+    if forward_targets:
+        forward_target_results = compute_forward_targets(
+            data=data,
+            targets=forward_targets,
+            current_price=current_price,
+            dcf_discount_rate=dcf_discount_rate,
+            dcf_terminal_growth=dcf_terminal_growth,
+            dcf_fade_period=dcf_fade_period,
+        )
+
     return {
         "ticker": ticker,
         "peer_count": len(peer_tickers),
@@ -959,4 +1355,5 @@ def compute_peer_valuation(
         "historical_composite_valuation": historical_composite,
         "peer_stats": peer_stats,
         "dcf": dcf_result,
+        "forward_targets": forward_target_results,
     }

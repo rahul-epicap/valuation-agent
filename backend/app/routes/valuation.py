@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import Snapshot
-from app.services.valuation_service import compute_valuation_estimate
+from app.services import index_service
+from app.services.valuation_service import (
+    CONTINUOUS_FACTORS,
+    compute_valuation_estimate,
+    compute_spot_regression_multi_factor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,19 @@ router = APIRouter(tags=["valuation"])
 # ---------------------------------------------------------------------------
 # Request model
 # ---------------------------------------------------------------------------
+class ForwardTargetInput(BaseModel):
+    horizon_years: int = Field(ge=1, le=10, description="Years forward (e.g. 2 or 5)")
+    eps_growth_at_horizon: float = Field(
+        description="Decimal EPS growth rate at that horizon (e.g. 0.15 for 15%)"
+    )
+    forward_eps_at_horizon: float = Field(
+        gt=0, description="Projected forward EPS at horizon (e.g. 12.50)"
+    )
+    revenue_growth_at_horizon: float | None = Field(
+        default=None, description="Revenue growth at horizon (context only)"
+    )
+
+
 class ValuationEstimateRequest(BaseModel):
     ticker: str | None = None
     revenue_growth: float  # decimal, 0.08 = 8%
@@ -37,6 +55,17 @@ class ValuationEstimateRequest(BaseModel):
     dcf_terminal_growth: float = Field(0.0, ge=-0.02, le=0.10)
     dcf_fade_period: int = Field(5, ge=1, le=15)
     snapshot_id: int | None = None
+    forward_targets: list[ForwardTargetInput] | None = Field(
+        default=None, max_length=5, description="Optional forward price target inputs"
+    )
+    current_price: float | None = Field(
+        default=None, gt=0, description="Current stock price for upside calculation"
+    )
+    regression_factors: list[str] | None = Field(
+        default=None,
+        max_length=50,
+        description="Index names to use as dummy regression factors (e.g. ['SPX', 'MSXXTECH'])",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +142,41 @@ class IndustryStats(PeerStats):
     industry: str | None = None
 
 
+class ForwardTargetResult(BaseModel):
+    horizon_years: int
+    eps_growth_at_horizon_pct: float
+    forward_eps_at_horizon: float
+    spot_implied_pe: float | None = None
+    spot_target_price: float | None = None
+    spot_regression_stats: RegressionStats | None = None
+    historical_implied_pe: float | None = None
+    historical_target_price: float | None = None
+    historical_regression_stats: RegressionStats | None = None
+    dcf_implied_pe: float | None = None
+    dcf_target_price: float | None = None
+    current_price: float | None = None
+    spot_upside_pct: float | None = None
+    historical_upside_pct: float | None = None
+    dcf_upside_pct: float | None = None
+
+
+class FactorCoefficient(BaseModel):
+    name: str
+    type: str
+    coefficient: float
+
+
+class MultiFactorResult(BaseModel):
+    metric_type: str
+    intercept: float
+    growth_coefficient: float
+    factors: list[FactorCoefficient]
+    r2: float
+    adjusted_r2: float
+    n: int
+    p: int
+
+
 class ValuationEstimateResponse(BaseModel):
     ticker: str | None = None
     industry: str | None = None
@@ -123,6 +187,8 @@ class ValuationEstimateResponse(BaseModel):
     dcf: DcfValuation | None = None
     peer_context: list[PeerStats]
     industry_context: list[IndustryStats] | None = None
+    forward_targets: list[ForwardTargetResult] | None = None
+    multi_factor_results: list[MultiFactorResult] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +221,8 @@ async def valuation_estimate(
             raise HTTPException(status_code=404, detail="No snapshots found")
 
     data: dict = snapshot.get_data()
+    if data is None:
+        raise HTTPException(status_code=404, detail="Snapshot has no dashboard data")
 
     # 2. Validate ticker if provided
     if body.ticker is not None and body.ticker not in data.get("fm", {}):
@@ -179,6 +247,12 @@ async def valuation_estimate(
             dcf_terminal_growth=body.dcf_terminal_growth,
             dcf_fade_period=body.dcf_fade_period,
             eps_growth_gaap=body.eps_growth_gaap,
+            forward_targets=(
+                [t.model_dump() for t in body.forward_targets]
+                if body.forward_targets
+                else None
+            ),
+            current_price=body.current_price,
         )
     except Exception as exc:
         logger.exception("Valuation computation failed")
@@ -187,7 +261,30 @@ async def valuation_estimate(
             detail=f"Valuation computation failed: {exc}",
         ) from exc
 
-    # 4. Attach snapshot metadata
+    # 4. Multi-factor regression (if factors requested)
+    if body.regression_factors:
+        # Snapshot BYTEA doesn't include indices — load from index table
+        indices_map = await index_service.build_indices_map(db)
+
+        known_factors: set[str] = set(CONTINUOUS_FACTORS)
+        for idx_list in indices_map.values():
+            known_factors.update(idx_list)
+        valid_factors = [f for f in body.regression_factors if f in known_factors]
+
+        if valid_factors:
+            all_tickers = data["tickers"]
+            latest_di = len(data["dates"]) - 1
+            metric_types = ["evRev", "evGP", "pEPS", "pEPS_GAAP"]
+            mf_results = []
+            for mt in metric_types:
+                mf = compute_spot_regression_multi_factor(
+                    data, mt, latest_di, all_tickers, valid_factors, indices_map
+                )
+                if mf:
+                    mf_results.append({"metric_type": mt, **mf})
+            result_dict["multi_factor_results"] = mf_results if mf_results else None
+
+    # 5. Attach snapshot metadata
     result_dict["snapshot_id"] = snapshot.id
     result_dict["snapshot_date"] = (
         snapshot.created_at.isoformat() if snapshot.created_at else None

@@ -3,6 +3,7 @@
 import { DashboardData } from '../lib/types';
 import { Action, DashboardState } from '../hooks/useDashboardState';
 import IndexFilter from './IndexFilter';
+import FactorSelector from './FactorSelector';
 import IndustryFilter from './IndustryFilter';
 import GrowthRateFilter from './GrowthRateFilter';
 import TickerHighlight from './TickerHighlight';
@@ -24,6 +25,12 @@ export default function Sidebar({ data, state, dispatch, allIndustries, allIndic
       style={{ borderRight: '1px solid var(--brd)', background: 'var(--bg1)' }}
     >
       <IndexFilter
+        data={data}
+        state={state}
+        allIndices={allIndices}
+        dispatch={dispatch}
+      />
+      <FactorSelector
         data={data}
         state={state}
         allIndices={allIndices}

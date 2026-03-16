@@ -39,6 +39,9 @@ export interface DashboardState {
   peerValResults: PeerValuationResult | null;
   peerValLoading: boolean;
   peerValError: string | null;
+  // Multi-factor regression
+  mfEnabled: boolean;
+  regFactors: Set<string>;
 }
 
 export type Action =
@@ -78,7 +81,11 @@ export type Action =
   | { type: 'SET_PEER_VAL_TICKER'; payload: string | null }
   | { type: 'SET_PEER_VAL_RESULTS'; payload: PeerValuationResult | null }
   | { type: 'SET_PEER_VAL_LOADING'; payload: boolean }
-  | { type: 'SET_PEER_VAL_ERROR'; payload: string | null };
+  | { type: 'SET_PEER_VAL_ERROR'; payload: string | null }
+  | { type: 'TOGGLE_MF' }
+  | { type: 'TOGGLE_REG_FACTOR'; payload: string }
+  | { type: 'SET_REG_FACTORS'; payload: string[] }
+  | { type: 'CLEAR_REG_FACTORS' };
 
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -184,6 +191,18 @@ function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, peerValLoading: action.payload };
     case 'SET_PEER_VAL_ERROR':
       return { ...state, peerValError: action.payload };
+    case 'TOGGLE_MF':
+      return { ...state, mfEnabled: !state.mfEnabled };
+    case 'TOGGLE_REG_FACTOR': {
+      const next = new Set(state.regFactors);
+      if (next.has(action.payload)) next.delete(action.payload);
+      else next.add(action.payload);
+      return { ...state, regFactors: next };
+    }
+    case 'SET_REG_FACTORS':
+      return { ...state, regFactors: new Set(action.payload) };
+    case 'CLEAR_REG_FACTORS':
+      return { ...state, regFactors: new Set() };
     default:
       return state;
   }
@@ -222,6 +241,8 @@ export function createInitialState(data: DashboardData): DashboardState {
     peerValResults: null,
     peerValLoading: false,
     peerValError: null,
+    mfEnabled: false,
+    regFactors: new Set(),
   };
 }
 

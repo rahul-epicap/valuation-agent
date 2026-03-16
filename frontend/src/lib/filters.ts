@@ -1,4 +1,4 @@
-import { DashboardData, MetricType, MetricArrayKey, ScatterPoint, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
+import { DashboardData, MetricType, MetricArrayKey, ScatterPoint, MultiFactorScatterPoint, TickerMetrics, MULTIPLE_KEYS, GROWTH_KEYS } from './types';
 
 export function getActiveTickers(
   data: DashboardData,
@@ -152,6 +152,77 @@ export function filterMultiples(
     vals.push(m as number);
   }
   return vals;
+}
+
+/**
+ * Enriches filterPoints output with per-ticker factor dummy values.
+ * Reuses all existing filter logic, then attaches factorValues for each point.
+ */
+/** Built-in continuous factors derived from existing data. */
+export const CONTINUOUS_FACTORS: Record<string, string> = {
+  GROSS_MARGIN: 'Gross Margin (GP/Rev)',
+};
+
+export function filterPointsMultiFactor(
+  data: DashboardData,
+  type: MetricType,
+  dateIndex: number,
+  tickers: string[],
+  revGrMin: number | null,
+  revGrMax: number | null,
+  epsGrMin: number | null,
+  epsGrMax: number | null,
+  regressionFactors: string[],
+): MultiFactorScatterPoint[] {
+  const basePts = filterPoints(data, type, dateIndex, tickers, revGrMin, revGrMax, epsGrMin, epsGrMax);
+  if (regressionFactors.length === 0) {
+    return basePts;
+  }
+
+  const indexFactors = regressionFactors.filter((f) => !(f in CONTINUOUS_FACTORS));
+  const hasContinuous = regressionFactors.some((f) => f in CONTINUOUS_FACTORS);
+
+  // First pass: build points with index dummies + raw continuous values
+  const enriched: MultiFactorScatterPoint[] = basePts.map((pt) => {
+    const factorValues: Record<string, number> = {};
+
+    // Index dummies
+    if (indexFactors.length > 0 && data.indices) {
+      const tickerIndexSet = new Set(data.indices[pt.t] || []);
+      for (const factor of indexFactors) {
+        factorValues[factor] = tickerIndexSet.has(factor) ? 1 : 0;
+      }
+    }
+
+    // Gross margin: er / eg = (EV/Rev) / (EV/GP) = GP/Rev
+    if (hasContinuous && regressionFactors.includes('GROSS_MARGIN')) {
+      const d = data.fm[pt.t];
+      const er = d?.er?.[dateIndex];
+      const eg = d?.eg?.[dateIndex];
+      if (er != null && eg != null && eg > 0) {
+        factorValues['GROSS_MARGIN'] = er / eg;
+      } else {
+        factorValues['GROSS_MARGIN'] = NaN; // mark for imputation
+      }
+    }
+
+    return { ...pt, factorValues };
+  });
+
+  // Second pass: mean-impute missing continuous values
+  if (hasContinuous && regressionFactors.includes('GROSS_MARGIN')) {
+    const valid = enriched
+      .map((p) => p.factorValues!['GROSS_MARGIN'])
+      .filter((v) => !isNaN(v));
+    const mean = valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : 0;
+    for (const pt of enriched) {
+      if (isNaN(pt.factorValues!['GROSS_MARGIN'])) {
+        pt.factorValues!['GROSS_MARGIN'] = mean;
+      }
+    }
+  }
+
+  return enriched;
 }
 
 export function percentile(sorted: number[], p: number): number {
