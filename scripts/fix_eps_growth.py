@@ -48,25 +48,46 @@ logger = logging.getLogger("fix_eps_growth")
 # Test tickers with expected xg % (from Bloomberg terminal, latest date)
 # Used with --test-tickers to validate before full run
 EXPECTED_XG: dict[str, int] = {
-    "ADBE": 12,
-    "META": 26,
-    "MSFT": 24,
-    "CRM": 5,
-    "AAPL": 14,
-    "XYZ": 49,
-    "LLY": 43,
-    "NVDA": 74,
-    "AVGO": 60,
+    "ADBE": 11,
+    "META": 6,
+    "MSFT": 19,
+    "CRM": 7,
+    "AAPL": 10,
+    "XYZ": 58,
+    "LLY": 49,
+    "NVDA": 80,
+    "AVGO": 79,
     "DUOL": -58,
-    "AXON": 14,
-    "AMD": 61,
-    "INTC": 26,
-    "TOST": 58,
-    "VRT": 45,
-    "DDOG": 7,
-    "NET": 21,
-    "HOOD": 17,
-    "KLAC": 10,
+    "AXON": 22,
+    "AMD": 80,
+    "INTC": 49,
+    "TOST": 69,
+    "VRT": 54,
+    "DDOG": 12,
+    "NET": 29,
+    "HOOD": 21,
+    "KLAC": 22,
+}
+EXPECTED_XG_GAAP: dict[str, int] = {
+    "ADBE": 10,
+    "META": 30,
+    "MSFT": 15,
+    "CRM": 4,
+    "AAPL": 13,
+    "XYZ": 60,
+    "LLY": 52,
+    "NVDA": 71,
+    "AVGO": 110,
+    "DUOL": -59,
+    "AXON": 37,
+    "AMD": 107,
+    "INTC": 39,
+    "TOST": 51,
+    "VRT": 74,
+    "DDOG": 3,
+    "NET": 4,
+    "HOOD": 24,
+    "KLAC": 27,
 }
 TEST_TICKERS = list(EXPECTED_XG.keys())
 
@@ -150,7 +171,7 @@ async def main() -> None:
                 sys.exit(1)
 
             snapshot_id = snapshot.id
-            data = snapshot.dashboard_data
+            data = snapshot.get_data()
 
         dates: list[str] = data["dates"]
         tickers: list[str] = data["tickers"]
@@ -196,23 +217,25 @@ async def main() -> None:
         # Convert to Bloomberg format
         bbg_tickers = [f"{t} US Equity" for t in tickers_to_fetch]
 
-        # Step 4: Fetch trailing EPS from Bloomberg (both Adj and GAAP)
+        # Step 4: Fetch EPS data from Bloomberg (trailing + forward, Adj + GAAP)
         first_date = dates[0]
         last_date = dates[-1]
         start_year = int(first_date[:4])
         fetch_start = f"{start_year - 1}-01-01"
+        # Fetch up to today so latest values match BDP spot
+        fetch_end = datetime.now().strftime("%Y-%m-%d")
 
         logger.info(
             "Step 4a: Fetching TRAIL_12M_EST_COMP_EPS_EXCL_STK for %d tickers "
             "(%s to %s)",
             len(bbg_tickers),
             fetch_start,
-            last_date,
+            fetch_end,
         )
         trail_excl_raw = await bloomberg._fetch_bdh_metric(
             "TRAIL_12M_EST_COMP_EPS_EXCL_STK",
             fetch_start,
-            last_date,
+            fetch_end,
             tickers=bbg_tickers,
         )
 
@@ -220,12 +243,12 @@ async def main() -> None:
             "Step 4b: Fetching TRAIL_12M_COMPARABLE_EPS_GAAP for %d tickers (%s to %s)",
             len(bbg_tickers),
             fetch_start,
-            last_date,
+            fetch_end,
         )
         trail_gaap_raw = await bloomberg._fetch_bdh_metric(
             "TRAIL_12M_COMPARABLE_EPS_GAAP",
             fetch_start,
-            last_date,
+            fetch_end,
             tickers=bbg_tickers,
         )
 
@@ -233,31 +256,47 @@ async def main() -> None:
             "Step 4c: Fetching BEST_EPS_GAAP (BF) for %d tickers (%s to %s)",
             len(bbg_tickers),
             fetch_start,
-            last_date,
+            fetch_end,
         )
         fwd_gaap_raw = await bloomberg._fetch_bdh_metric(
             "BEST_EPS_GAAP",
             fetch_start,
-            last_date,
+            fetch_end,
             overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
             periodicity="WEEKLY",
             tickers=bbg_tickers,
         )
 
-        # Forward-fill trailing sets to monthly date grid
-        logger.info("Step 5: Forward-filling trailing EPS to date grid")
+        logger.info(
+            "Step 4d: Fetching BEST_EPS (BF) for %d tickers (%s to %s)",
+            len(bbg_tickers),
+            fetch_start,
+            fetch_end,
+        )
+        fwd_eps_raw = await bloomberg._fetch_bdh_metric(
+            "BEST_EPS",
+            fetch_start,
+            fetch_end,
+            overrides=[("BEST_FPERIOD_OVERRIDE", "BF")],
+            periodicity="WEEKLY",
+            tickers=bbg_tickers,
+        )
+
+        # Forward-fill all BDH data to the snapshot's monthly date grid
+        # (handles quarterly trailing AND weekly forward data correctly)
+        logger.info("Step 5: Forward-filling BDH data to date grid")
         trail_excl_arrays = BloombergService._forward_fill_yearly_to_monthly(
             trail_excl_raw, dates
         )
         trail_gaap_arrays = BloombergService._forward_fill_yearly_to_monthly(
             trail_gaap_raw, dates
         )
-
-        # Convert GAAP forward EPS to arrays aligned to snapshot date grid
-        fwd_gaap_arrays: dict[str, list[float | None]] = {}
-        for bbg_ticker, date_vals in fwd_gaap_raw.items():
-            short = bbg_ticker.replace(" US Equity", "").strip()
-            fwd_gaap_arrays[short] = [date_vals.get(d) for d in dates]
+        fwd_gaap_arrays = BloombergService._forward_fill_yearly_to_monthly(
+            fwd_gaap_raw, dates
+        )
+        fwd_eps_arrays = BloombergService._forward_fill_yearly_to_monthly(
+            fwd_eps_raw, dates
+        )
 
         # Fetch BEST_EPS_MARKET_TYPE via BDP
         logger.info(
@@ -283,12 +322,12 @@ async def main() -> None:
         gaap_additions = 0
         tickers_changed = 0
         validation_results: list[
-            tuple[str, float | None, float | None, int | None]
-        ] = []
+            tuple[str, float | None, float | None, int, float | None, int | None]
+        ] = []  # (ticker, old_xg, new_xg, expected_xg, new_xg_gaap, expected_xg_gaap)
 
         for ticker in tickers_to_fetch:
-            # --- Adj EPS growth (xg) ---
-            fwd_arr = fm.get(ticker, {}).get("fe", [])
+            # --- Adj EPS growth (xg) using fresh forward EPS ---
+            fwd_arr = fwd_eps_arrays.get(ticker, [])
             old_xg = fm.get(ticker, {}).get("xg", [])
             trail_arr = trail_excl_arrays.get(ticker, [])
 
@@ -311,28 +350,17 @@ async def main() -> None:
                     ticker_xg_changed = True
                     xg_changes += 1
 
-            # Collect validation data for tickers with expected values
-            if ticker in EXPECTED_XG:
-                last_new: float | None = None
-                last_old: float | None = None
-                for check_i in range(len(dates) - 1, -1, -1):
-                    if check_i < len(new_xg) and new_xg[check_i] is not None:
-                        last_new = new_xg[check_i]
-                        last_old = old_xg[check_i] if check_i < len(old_xg) else None
-                        break
-                validation_results.append(
-                    (ticker, last_old, last_new, EXPECTED_XG[ticker])
-                )
-
             if ticker_xg_changed:
                 tickers_changed += 1
                 fm[ticker]["xg"] = new_xg
+            # Also update fe with fresh forward EPS
+            fm[ticker]["fe"] = fwd_arr
 
             # --- GAAP metrics ---
             fwd_gaap_arr = fwd_gaap_arrays.get(ticker, [])
             trail_gaap_arr = trail_gaap_arrays.get(ticker, [])
             pe_arr = fm.get(ticker, {}).get("pe", [])
-            fe_adj_arr = fm.get(ticker, {}).get("fe", [])
+            fe_adj_arr = fwd_arr  # Use fresh forward EPS for pe_gaap derivation
 
             new_xg_gaap: list[float | None] = []
             new_fe_gaap: list[float | None] = []
@@ -378,19 +406,49 @@ async def main() -> None:
             if ticker in eps_market_type:
                 fm[ticker]["epsMarketType"] = eps_market_type[ticker]
 
+            # Collect validation data for tickers with expected values
+            if ticker in EXPECTED_XG:
+                last_new: float | None = None
+                last_old: float | None = None
+                last_gaap: float | None = None
+                for check_i in range(len(dates) - 1, -1, -1):
+                    if check_i < len(new_xg) and new_xg[check_i] is not None:
+                        last_new = new_xg[check_i]
+                        last_old = old_xg[check_i] if check_i < len(old_xg) else None
+                        break
+                for check_i in range(len(dates) - 1, -1, -1):
+                    if check_i < len(new_xg_gaap) and new_xg_gaap[check_i] is not None:
+                        last_gaap = new_xg_gaap[check_i]
+                        break
+                validation_results.append(
+                    (
+                        ticker,
+                        last_old,
+                        last_new,
+                        EXPECTED_XG[ticker],
+                        last_gaap,
+                        EXPECTED_XG_GAAP.get(ticker),
+                    )
+                )
+
         # Print validation table
         if validation_results:
             logger.info("")
             logger.info(
-                "  %-8s %12s %12s %12s %8s",
+                "  %-8s %8s %8s %8s %6s | %8s %8s %6s",
                 "TICKER",
                 "OLD xg",
                 "NEW xg",
-                "EXPECTED",
-                "DELTA",
+                "EXP xg",
+                "DIFF",
+                "GAAP",
+                "EXP",
+                "DIFF",
             )
-            logger.info("  %s", "-" * 56)
-            for ticker, old_v, new_v, expected in sorted(validation_results):
+            logger.info("  %s", "-" * 74)
+            for ticker, old_v, new_v, expected, gaap_v, exp_gaap in sorted(
+                validation_results
+            ):
                 old_str = f"{old_v * 100:+.0f}%" if old_v is not None else "N/A"
                 new_str = f"{new_v * 100:+.0f}%" if new_v is not None else "N/A"
                 exp_str = f"{expected:+d}%"
@@ -399,13 +457,23 @@ async def main() -> None:
                     delta_str = f"{delta}pp" if delta > 0 else "OK"
                 else:
                     delta_str = "???"
+                gaap_str = f"{gaap_v * 100:+.0f}%" if gaap_v is not None else "N/A"
+                exp_gaap_str = f"{exp_gaap:+d}%" if exp_gaap is not None else "N/A"
+                if gaap_v is not None and exp_gaap is not None:
+                    gaap_delta = abs(round(gaap_v * 100) - exp_gaap)
+                    gaap_delta_str = f"{gaap_delta}pp" if gaap_delta > 0 else "OK"
+                else:
+                    gaap_delta_str = "???"
                 logger.info(
-                    "  %-8s %12s %12s %12s %8s",
+                    "  %-8s %8s %8s %8s %6s | %8s %8s %6s",
                     ticker,
                     old_str,
                     new_str,
                     exp_str,
                     delta_str,
+                    gaap_str,
+                    exp_gaap_str,
+                    gaap_delta_str,
                 )
             logger.info("")
 
@@ -422,11 +490,19 @@ async def main() -> None:
         # Step 7: Write back to DB
         if not args.dry_run:
             logger.info("Step 7: Updating snapshot #%d in DB", snapshot_id)
+            compressed = Snapshot.compress(data)
+            logger.info(
+                "Compressed snapshot: %.1f MB",
+                len(compressed) / (1024 * 1024),
+            )
             async with AsyncSessionLocal() as db:
                 await db.execute(
                     update(Snapshot)
                     .where(Snapshot.id == snapshot_id)
-                    .values(dashboard_data=data)
+                    .values(
+                        dashboard_data_compressed=compressed,
+                        dashboard_data=None,
+                    )
                 )
                 await db.commit()
             logger.info("Snapshot #%d updated successfully", snapshot_id)

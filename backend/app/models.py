@@ -1,9 +1,13 @@
+import gzip
+
+import orjson
 from sqlalchemy import (
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -20,11 +24,23 @@ class Snapshot(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    dashboard_data = Column(JSONB, nullable=False)
+    dashboard_data = Column(JSONB, nullable=True)  # Legacy; kept for old snapshots
+    dashboard_data_compressed = Column(LargeBinary, nullable=True)  # gzip(JSON bytes)
     source_filename = Column(String(255))
     ticker_count = Column(Integer)
     date_count = Column(Integer)
     industry_count = Column(Integer)
+
+    def get_data(self) -> dict:
+        """Read dashboard data, preferring compressed format."""
+        if self.dashboard_data_compressed is not None:
+            return orjson.loads(gzip.decompress(self.dashboard_data_compressed))
+        return dict(self.dashboard_data) if self.dashboard_data else {}
+
+    @staticmethod
+    def compress(data: dict) -> bytes:
+        """Compress a dashboard data dict for BYTEA storage."""
+        return gzip.compress(orjson.dumps(data), compresslevel=6)
 
 
 class Index(Base):
@@ -60,6 +76,7 @@ class TickerDescription(Base):
     ticker = Column(String(100), unique=True, nullable=False, index=True)
     bbg_ticker = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    isin = Column(String(20), nullable=True)
     source_field = Column(String(100), nullable=True)
     fetched_at = Column(DateTime(timezone=True), server_default=func.now())
     embedded_at = Column(DateTime(timezone=True), nullable=True)

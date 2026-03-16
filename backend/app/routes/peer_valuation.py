@@ -135,7 +135,7 @@ async def peer_estimate(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="No snapshot found")
 
-    data = snapshot.dashboard_data
+    data = snapshot.get_data()
     if body.ticker not in data.get("tickers", []):
         raise HTTPException(
             status_code=404,

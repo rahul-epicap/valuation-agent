@@ -127,9 +127,9 @@ async def _get_enriched_data(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
-    data = dict(snapshot.dashboard_data)
+    data = snapshot.get_data()
     # Deep-copy fm so _compact_data's in-place mutations don't touch the ORM object
-    if "fm" in data:
+    if "fm" in data and snapshot.dashboard_data is not None:
         data["fm"] = {
             t: {k: list(v) for k, v in m.items()} for t, m in data["fm"].items()
         }
@@ -273,7 +273,7 @@ async def import_snapshot(
 
     snapshot = Snapshot(
         name=body.name,
-        dashboard_data=data,
+        dashboard_data_compressed=Snapshot.compress(data),
         source_filename="imported",
         ticker_count=ticker_count,
         date_count=date_count,

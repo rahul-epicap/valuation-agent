@@ -154,7 +154,7 @@ async def valuation_estimate(
         if snapshot is None:
             raise HTTPException(status_code=404, detail="No snapshots found")
 
-    data: dict = snapshot.dashboard_data
+    data: dict = snapshot.get_data()
 
     # 2. Validate ticker if provided
     if body.ticker is not None and body.ticker not in data.get("fm", {}):
