@@ -24,8 +24,8 @@ class Snapshot(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    dashboard_data = Column(JSONB, nullable=True)
-    dashboard_data_compressed = Column(LargeBinary, nullable=True)
+    dashboard_data = Column(JSONB, nullable=True)  # Legacy; kept for old snapshots
+    dashboard_data_compressed = Column(LargeBinary, nullable=True)  # gzip(JSON bytes)
     source_filename = Column(String(255))
     ticker_count = Column(Integer)
     date_count = Column(Integer)
@@ -38,6 +38,11 @@ class Snapshot(Base):
         if self.dashboard_data is not None:
             return dict(self.dashboard_data)
         return None
+
+    @staticmethod
+    def compress(data: dict) -> bytes:
+        """Compress a dashboard data dict for BYTEA storage."""
+        return gzip.compress(orjson.dumps(data), compresslevel=6)
 
     def set_data(self, data: dict) -> None:
         """Gzip-compress and store dashboard data in BYTEA column."""
@@ -80,6 +85,7 @@ class TickerDescription(Base):
     ticker = Column(String(100), unique=True, nullable=False, index=True)
     bbg_ticker = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    isin = Column(String(20), nullable=True)
     source_field = Column(String(100), nullable=True)
     fetched_at = Column(DateTime(timezone=True), server_default=func.now())
     embedded_at = Column(DateTime(timezone=True), nullable=True)

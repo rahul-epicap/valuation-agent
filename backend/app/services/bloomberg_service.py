@@ -615,6 +615,62 @@ class BloombergService:
 
         return industries
 
+    async def fetch_isins(self, tickers: list[str] | None = None) -> dict[str, str]:
+        """Fetch ID_ISIN for all tickers via BDP.
+
+        Returns {bbg_ticker: isin} mapping.
+        """
+        ticker_universe = tickers or self._tickers
+        isins: dict[str, str] = {}
+
+        for batch in self._batches(ticker_universe, _BATCH_SIZE):
+            try:
+                df = await asyncio.to_thread(self._bdp_sync, batch, ["ID_ISIN"])
+            except Exception:
+                logger.exception(
+                    "BDP ID_ISIN failed for batch starting with %s",
+                    batch[0],
+                )
+                continue
+
+            if df.empty:
+                continue
+
+            df = df.reset_index()
+
+            sec_col = None
+            for c in df.columns:
+                if str(c).lower() == "security":
+                    sec_col = c
+                    break
+
+            if sec_col is None:
+                for c in df.columns:
+                    sample = df[c].iloc[0] if len(df) > 0 else ""
+                    if isinstance(sample, str) and "Equity" in sample:
+                        sec_col = c
+                        break
+
+            if sec_col is None:
+                logger.warning(
+                    "BDP ID_ISIN: cannot find security column. Columns: %s",
+                    list(df.columns),
+                )
+                continue
+
+            for _, row in df.iterrows():
+                ticker_bbg = str(row[sec_col]).strip()
+                isin = row.get("ID_ISIN")
+                if isin and isinstance(isin, str) and isin.strip():
+                    isins[ticker_bbg] = isin.strip()
+
+        logger.info(
+            "Fetched ISINs for %d / %d tickers",
+            len(isins),
+            len(ticker_universe),
+        )
+        return isins
+
     async def _fetch_eps_market_type(
         self, tickers: list[str] | None = None
     ) -> dict[str, str]:
@@ -1433,7 +1489,7 @@ class BloombergService:
         merged = self._merge_dashboard_data(existing_data, new_data)
 
         logger.info(
-            "Incremental merge: %d existing dates + %d new dates → %d merged dates",
+            "Incremental merge: %d existing dates + %d new dates -> %d merged dates",
             len(existing_dates),
             len(new_data.get("dates", [])),
             len(merged.get("dates", [])),

@@ -220,7 +220,7 @@ async def valuation_estimate(
         if snapshot is None:
             raise HTTPException(status_code=404, detail="No snapshots found")
 
-    data = snapshot.get_data()
+    data: dict = snapshot.get_data()
     if data is None:
         raise HTTPException(status_code=404, detail="Snapshot has no dashboard data")
 

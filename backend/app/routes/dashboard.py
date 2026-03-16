@@ -135,7 +135,7 @@ async def _get_enriched_data(
         )
 
     # Deep-copy fm so _compact_data's in-place mutations don't touch the ORM object
-    if "fm" in data:
+    if "fm" in data and snapshot.dashboard_data is not None:
         data["fm"] = {
             t: {k: list(v) for k, v in m.items()} for t, m in data["fm"].items()
         }
