@@ -1,10 +1,10 @@
-"""POST /api/valuation/estimate — AI-agent-friendly valuation endpoint."""
+"""Valuation endpoints — estimate + ticker snapshot lookup."""
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,118 @@ from app.services.valuation_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["valuation"])
+
+
+# ---------------------------------------------------------------------------
+# GET /api/valuation/snapshot — ticker data from latest snapshot
+# ---------------------------------------------------------------------------
+
+
+class TickerCurrentMetrics(BaseModel):
+    date: str | None = None
+    ev_revenue: float | None = None
+    ev_gp: float | None = None
+    pe: float | None = None
+    revenue_growth: float | None = None
+    eps_growth: float | None = None
+    forward_eps: float | None = None
+
+
+class TickerSnapshotResponse(BaseModel):
+    ticker: str
+    industry: str | None = None
+    snapshot_id: int
+    snapshot_date: str | None = None
+    latest_date: str | None = None
+    current: TickerCurrentMetrics
+
+
+def _latest_non_null(arr: list | None) -> tuple[float | None, int]:
+    """Return (value, index) of the last non-null element."""
+    if not arr:
+        return None, -1
+    for i in range(len(arr) - 1, -1, -1):
+        if arr[i] is not None:
+            return arr[i], i
+    return None, -1
+
+
+@router.get("/valuation/snapshot", response_model=TickerSnapshotResponse)
+async def get_ticker_snapshot(
+    ticker: str = Query(..., description="Stock ticker symbol"),
+    snapshot_id: int | None = Query(None, description="Snapshot ID (default: latest)"),
+    db: AsyncSession = Depends(get_db),
+) -> TickerSnapshotResponse:
+    """Return a ticker's current multiples and growth from the snapshot.
+
+    Useful for pre-populating valuation inputs (forward EPS, current P/E, etc.)
+    before calling POST /api/valuation/estimate.
+    """
+    # Load snapshot
+    if snapshot_id is not None:
+        result = await db.execute(select(Snapshot).where(Snapshot.id == snapshot_id))
+        snapshot = result.scalar_one_or_none()
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+    else:
+        result = await db.execute(
+            select(Snapshot).order_by(Snapshot.created_at.desc()).limit(1)
+        )
+        snapshot = result.scalar_one_or_none()
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="No snapshots found")
+
+    data: dict = snapshot.get_data()
+    if data is None:
+        raise HTTPException(status_code=404, detail="Snapshot has no dashboard data")
+
+    fm = data.get("fm", {})
+    if ticker not in fm:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ticker '{ticker}' not found in snapshot",
+        )
+
+    dates = data.get("dates", [])
+    metrics = fm[ticker]
+
+    # Extract latest non-null value for each metric
+    er_val, _ = _latest_non_null(metrics.get("er"))
+    eg_val, _ = _latest_non_null(metrics.get("eg"))
+    pe_val, _ = _latest_non_null(metrics.get("pe"))
+    rg_val, _ = _latest_non_null(metrics.get("rg"))
+    xg_val, _ = _latest_non_null(metrics.get("xg"))
+    fe_val, _ = _latest_non_null(metrics.get("fe"))
+
+    # Find the latest date that has any non-null metric
+    latest_idx = -1
+    for key in ("er", "eg", "pe", "rg", "xg", "fe"):
+        _, idx = _latest_non_null(metrics.get(key))
+        if idx > latest_idx:
+            latest_idx = idx
+
+    latest_date = dates[latest_idx] if 0 <= latest_idx < len(dates) else None
+
+    industry = data.get("industries", {}).get(ticker)
+
+    return TickerSnapshotResponse(
+        ticker=ticker,
+        industry=industry,
+        snapshot_id=snapshot.id,
+        snapshot_date=(
+            snapshot.created_at.isoformat() if snapshot.created_at else None
+        ),
+        latest_date=latest_date,
+        current=TickerCurrentMetrics(
+            date=latest_date,
+            ev_revenue=er_val,
+            ev_gp=eg_val,
+            pe=pe_val,
+            revenue_growth=rg_val,
+            eps_growth=xg_val,
+            forward_eps=fe_val,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
